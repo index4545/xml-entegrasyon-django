@@ -1,0 +1,117 @@
+{% extends 'products/base.html' %}
+{% load product_filters %}
+
+{% block title %}Özellik Eşleştirme{% endblock %}
+
+{% block header %}
+<div class="d-flex justify-content-between align-items-center">
+    <span>Özellik Eşleştirme: {{ mapping.trendyol_category_name }}</span>
+    <a href="{% url 'match_categories' %}" class="btn btn-secondary btn-sm">Geri Dön</a>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="card card-custom">
+    <div class="card-body">
+        <div class="alert alert-info">
+            <strong>XML Kategorisi:</strong> {{ mapping.xml_category_name }} <br>
+            <strong>Trendyol Kategorisi:</strong> {{ mapping.trendyol_category_name }} (ID: {{ mapping.trendyol_category_id }})
+        </div>
+
+        <form method="post">
+            {% csrf_token %}
+            
+            {% if required_attributes %}
+            <h5 class="mt-4 mb-3 text-danger"><i class="fas fa-exclamation-circle me-2"></i>Zorunlu Özellikler</h5>
+            <div class="table-responsive mb-4">
+                <table class="table table-hover align-middle border">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 25%">Trendyol Özelliği</th>
+                            <th style="width: 15%">Eşleşme Tipi</th>
+                            <th style="width: 35%">Değer / XML Alanı</th>
+                            <th style="width: 25%">Varyant Ayarları</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for attr in required_attributes %}
+                            {% include "products/includes/attribute_row.html" with attr=attr %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            {% if optional_attributes %}
+            <h5 class="mt-4 mb-3 text-secondary"><i class="fas fa-info-circle me-2"></i>Opsiyonel Özellikler</h5>
+            <div class="table-responsive mb-4">
+                <table class="table table-hover align-middle border">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 25%">Trendyol Özelliği</th>
+                            <th style="width: 15%">Eşleşme Tipi</th>
+                            <th style="width: 35%">Değer / XML Alanı</th>
+                            <th style="width: 25%">Varyant Ayarları</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for attr in optional_attributes %}
+                            {% include "products/includes/attribute_row.html" with attr=attr %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-3">
+                <button type="submit" class="btn btn-primary"><i class="fas fa-save me-2"></i>Eşleşmeleri Kaydet</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const selectors = document.querySelectorAll('.mapping-type-selector');
+    
+    selectors.forEach(selector => {
+        selector.addEventListener('change', function() {
+            const targetId = this.dataset.target;
+            const container = document.getElementById(targetId);
+            const fixedInput = container.querySelector('.fixed-input');
+            const xmlInput = container.querySelector('.xml-input');
+            const smartInput = container.querySelector('.smart-input');
+            
+            const fixedField = fixedInput.querySelector('input, select');
+            const xmlField = xmlInput.querySelector('select');
+            const smartField = smartInput ? smartInput.querySelector('input') : null;
+
+            // Reset all
+            fixedInput.style.display = 'none';
+            xmlInput.style.display = 'none';
+            if(smartInput) smartInput.style.display = 'none';
+            
+            fixedField.disabled = true;
+            xmlField.disabled = true;
+            if(smartField) smartField.disabled = true;
+
+            if (this.value === 'fixed') {
+                fixedInput.style.display = 'flex';
+                fixedField.disabled = false;
+                fixedField.name = this.name.replace('type_', 'value_');
+            } else if (this.value === 'xml') {
+                xmlInput.style.display = 'flex';
+                xmlField.disabled = false;
+                xmlField.name = this.name.replace('type_', 'value_');
+            } else if (this.value === 'smart') {
+                if(smartInput) {
+                    smartInput.style.display = 'block';
+                    smartField.disabled = false;
+                    smartField.name = this.name.replace('type_', 'value_');
+                }
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

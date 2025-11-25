@@ -1,0 +1,156 @@
+{% extends 'products/base.html' %}
+
+{% block title %}Ürün Gönderim Sihirbazı{% endblock %}
+
+{% block header %}Trendyol'a Ürün Gönder{% endblock %}
+
+{% block content %}
+<div class="card card-custom mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Filtreleme</h5>
+        <form method="get" class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">Tedarikçi</label>
+                <select name="supplier_id" class="form-select" onchange="this.form.submit()">
+                    {% for supplier in suppliers %}
+                    <option value="{{ supplier.id }}" {% if selected_supplier_id == supplier.id %}selected{% endif %}>{{ supplier.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Kategori (XML)</label>
+                <select name="category" class="form-select">
+                    <option value="">Tümü</option>
+                    {% for cat in categories %}
+                    <option value="{{ cat }}" {% if selected_category == cat %}selected{% endif %}>{{ cat }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Marka</label>
+                <select name="brand" class="form-select">
+                    <option value="">Tümü</option>
+                    {% for brand in brands %}
+                    <option value="{{ brand }}" {% if selected_brand == brand %}selected{% endif %}>{{ brand }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Arama</label>
+                <div class="input-group">
+                    <input type="text" name="q" class="form-control" placeholder="Ürün adı, SKU..." value="{{ search_query|default:'' }}">
+                    <button class="btn btn-primary" type="submit">Filtrele</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card card-custom">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="card-title">Ürün Listesi ({{ products.paginator.count }} Ürün)</h5>
+            <div>
+                <a href="{% url 'supplier_settings' %}?supplier_id={{ selected_supplier_id }}" class="btn btn-outline-secondary me-2" target="_blank">
+                    <i class="fas fa-cog me-1"></i> Gönderim Ayarları
+                </a>
+            </div>
+        </div>
+        
+        <form method="post" id="publishForm">
+            {% csrf_token %}
+            <input type="hidden" name="send_all" id="send_all_input" value="false">
+            
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle me-2"></i>
+                Fiyatlandırma ve diğer kurallar <strong>Tedarikçi Ayarları</strong> sayfasından yönetilmektedir.
+            </div>
+
+            <div class="table-responsive mb-3">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th><input type="checkbox" id="select-all"></th>
+                            <th>Görsel</th>
+                            <th>SKU</th>
+                            <th>Ürün Adı</th>
+                            <th>Stok</th>
+                            <th>Alış Fiyatı</th>
+                            <th>Kategori</th>
+                            <th>Marka</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for product in products %}
+                        <tr>
+                            <td><input type="checkbox" name="selected_products" value="{{ product.id }}" class="product-checkbox"></td>
+                            <td>
+                                {% if product.images.first %}
+                                <img src="{{ product.images.first.image_url }}" alt="" style="width: 50px; height: 50px; object-fit: cover;">
+                                {% else %}
+                                <span class="text-muted">Yok</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ product.sku }}</td>
+                            <td>{{ product.name }}</td>
+                            <td>{{ product.stock_quantity }}</td>
+                            <td>{{ product.buying_price }} TL</td>
+                            <td>{{ product.category_path }}</td>
+                            <td>{{ product.brand }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="8" class="text-center">Gönderilecek uygun ürün bulunamadı.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination -->
+            {% if products.has_other_pages %}
+            <nav aria-label="Page navigation" class="mb-3">
+                <ul class="pagination justify-content-center">
+                    {% if products.has_previous %}
+                    <li class="page-item"><a class="page-link" href="?page={{ products.previous_page_number }}&supplier_id={{ selected_supplier_id }}&category={{ selected_category }}&brand={{ selected_brand }}&q={{ search_query }}">Önceki</a></li>
+                    {% endif %}
+                    
+                    <li class="page-item disabled"><span class="page-link">Sayfa {{ products.number }} / {{ products.paginator.num_pages }}</span></li>
+                    
+                    {% if products.has_next %}
+                    <li class="page-item"><a class="page-link" href="?page={{ products.next_page_number }}&supplier_id={{ selected_supplier_id }}&category={{ selected_category }}&brand={{ selected_brand }}&q={{ search_query }}">Sonraki</a></li>
+                    {% endif %}
+                </ul>
+            </nav>
+            {% endif %}
+
+            {% if products %}
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-success" onclick="document.getElementById('send_all_input').value='false'">
+                    <i class="fas fa-check-square me-2"></i> Seçilileri Gönder
+                </button>
+                <button type="button" class="btn btn-warning" onclick="confirmSendAll()">
+                    <i class="fas fa-layer-group me-2"></i> Filtrelenen Tümünü Gönder ({{ products.paginator.count }})
+                </button>
+            </div>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+<script>
+    document.getElementById('select-all').addEventListener('change', function() {
+        var checkboxes = document.getElementsByClassName('product-checkbox');
+        for (var i = 0; i < checkboxes.length; i++) {
+            checkboxes[i].checked = this.checked;
+        }
+    });
+
+    function confirmSendAll() {
+        if(confirm("Mevcut filtrelere uyan TÜM ürünler ({{ products.paginator.count }} adet) Trendyol'a gönderilecek. Emin misiniz?")) {
+            document.getElementById('send_all_input').value = 'true';
+            document.getElementById('publishForm').submit();
+        }
+    }
+</script>
+{% endblock %}

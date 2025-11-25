@@ -1,0 +1,169 @@
+{% extends 'products/base.html' %}
+
+{% block header %}Genel Bakış{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card card-custom bg-primary text-white h-100">
+            <div class="card-body">
+                <h5 class="card-title">Toplam Ürün</h5>
+                <h2 class="display-4">{{ total_products }}</h2>
+                <i class="fas fa-box fa-2x float-end opacity-50"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card card-custom bg-success text-white h-100">
+            <div class="card-body">
+                <h5 class="card-title">Trendyol'da Yayında</h5>
+                <h2 class="display-4">{{ published_products }}</h2>
+                <i class="fas fa-check-circle fa-2x float-end opacity-50"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card card-custom bg-warning text-dark h-100">
+            <div class="card-body">
+                <h5 class="card-title">Bekleyen Ürünler</h5>
+                <h2 class="display-4">{{ pending_products }}</h2>
+                <i class="fas fa-clock fa-2x float-end opacity-50"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card card-custom bg-info text-white h-100">
+            <div class="card-body">
+                <h5 class="card-title">Tedarikçiler</h5>
+                <h2 class="display-4">{{ total_suppliers }}</h2>
+                <i class="fas fa-truck fa-2x float-end opacity-50"></i>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card card-custom">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Arka Plan İşlemleri</h5>
+                <span class="badge bg-info" id="process-status-badge">Canlı İzleniyor</span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>İşlem</th>
+                                <th>Tedarikçi</th>
+                                <th>Durum</th>
+                                <th>İlerleme</th>
+                                <th>Mesaj</th>
+                                <th>Başlangıç</th>
+                                <th>Bitiş</th>
+                            </tr>
+                        </thead>
+                        <tbody id="process-list">
+                            <tr>
+                                <td colspan="7" class="text-center py-3">Yükleniyor...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card card-custom">
+            <div class="card-header bg-white">
+                <h5 class="mb-0">Hızlı İşlemler</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <form action="{% url 'sync_xml' %}" method="post">
+                        {% csrf_token %}
+                        <div class="input-group mb-2">
+                            <select name="supplier_id" class="form-select">
+                                {% for supplier in suppliers %}
+                                <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="btn btn-outline-primary">
+                                <i class="fas fa-sync-alt"></i> Güncelle
+                            </button>
+                        </div>
+                    </form>
+                    <a href="{% url 'product_list' %}" class="btn btn-outline-success">
+                        <i class="fas fa-list me-2"></i> Ürün Listesine Git
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card card-custom">
+            <div class="card-header bg-white">
+                <h5 class="mb-0">Son Eklenen Ürünler</h5>
+            </div>
+            <div class="card-body p-0">
+                <ul class="list-group list-group-flush">
+                    {% for product in recent_products %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        {{ product.name|truncatechars:40 }}
+                        <span class="badge bg-secondary rounded-pill">{{ product.selling_price }} TL</span>
+                    </li>
+                    {% empty %}
+                    <li class="list-group-item">Henüz ürün yok.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function updateProcesses() {
+    fetch('{% url "get_background_processes" %}')
+        .then(response => response.json())
+        .then(data => {
+            const tbody = document.getElementById('process-list');
+            tbody.innerHTML = '';
+            
+            if (data.processes.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center py-3">Aktif işlem yok.</td></tr>';
+                return;
+            }
+
+            data.processes.forEach(p => {
+                let badgeClass = 'bg-secondary';
+                if (p.status_code === 'processing') badgeClass = 'bg-primary';
+                else if (p.status_code === 'completed') badgeClass = 'bg-success';
+                else if (p.status_code === 'failed') badgeClass = 'bg-danger';
+
+                const row = `
+                    <tr>
+                        <td>${p.type}</td>
+                        <td>${p.supplier}</td>
+                        <td><span class="badge ${badgeClass}">${p.status}</span></td>
+                        <td>${p.progress}</td>
+                        <td><small>${p.message}</small></td>
+                        <td>${p.created_at}</td>
+                        <td>${p.completed_at}</td>
+                    </tr>
+                `;
+                tbody.innerHTML += row;
+            });
+        })
+        .catch(error => console.error('Error fetching processes:', error));
+}
+
+// Update every 2 seconds
+setInterval(updateProcesses, 2000);
+updateProcesses();
+</script>
+{% endblock %}
