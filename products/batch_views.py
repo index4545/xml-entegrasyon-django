@@ -1,14 +1,18 @@
 from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
-from .models import TrendyolBatchRequest
+from .models import TrendyolBatchRequest, Product, BackgroundProcess
 from integrations.services import TrendyolService
 import json
 
 @login_required
 def batch_requests_list(request):
     batches = TrendyolBatchRequest.objects.all().order_by('-created_at')
-    return render(request, 'products/batch_requests_list.html', {'batches': batches})
+    processes = BackgroundProcess.objects.all().order_by('-created_at')
+    return render(request, 'products/batch_requests_list.html', {
+        'batches': batches,
+        'processes': processes
+    })
 
 @login_required
 def check_batch_status(request, batch_id):
@@ -28,6 +32,23 @@ def check_batch_status(request, batch_id):
         batch.result_json = result
         batch.save()
         
+        # Hatalı ürünleri bul ve yayından kaldır
+        if batch.failed_item_count > 0 and 'items' in result:
+            failed_barcodes = []
+            for item in result['items']:
+                if item.get('status') == 'FAILURE':
+                    # Trendyol genellikle requestItemIdentifier veya barcode alanında barkodu döner
+                    # Ancak createProducts v2'de requestItemIdentifier gönderilmediyse ne döner?
+                    # Genellikle barcode döner.
+                    # Kontrol edelim:
+                    identifier = item.get('requestItemIdentifier') or item.get('barcode')
+                    if identifier:
+                        failed_barcodes.append(identifier)
+            
+            if failed_barcodes:
+                updated_count = Product.objects.filter(barcode__in=failed_barcodes).update(is_published_to_trendyol=False)
+                messages.warning(request, f"{updated_count} adet hatalı ürün 'Yayında Değil' olarak işaretlendi.")
+
         messages.success(request, f"Batch durumu güncellendi: {batch.status}")
         
     except TrendyolBatchRequest.DoesNotExist:

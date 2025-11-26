@@ -1,0 +1,153 @@
+{% extends 'products/base.html' %}
+
+{% block header %}Ürün Listesi{% endblock %}
+
+{% block content %}
+<div class="card card-custom">
+    <div class="card-body">
+        <form method="get" class="row g-3 mb-4">
+            <div class="col-md-3">
+                <input type="text" name="q" class="form-control" placeholder="Ürün adı, SKU veya Barkod ara..." value="{{ search_query }}">
+            </div>
+            <div class="col-md-2">
+                <select name="status" class="form-select">
+                    <option value="">Tüm Durumlar</option>
+                    <option value="published" {% if selected_status == 'published' %}selected{% endif %}>Trendyol'da Yayında</option>
+                    <option value="pending" {% if selected_status == 'pending' %}selected{% endif %}>Yayında Değil</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <select name="category" class="form-select">
+                    <option value="">Tüm Kategoriler</option>
+                    {% for cat in categories %}
+                        <option value="{{ cat }}" {% if selected_category == cat %}selected{% endif %}>{{ cat }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <select name="brand" class="form-select">
+                    <option value="">Tüm Markalar</option>
+                    {% for brand in brands %}
+                        <option value="{{ brand }}" {% if selected_brand == brand %}selected{% endif %}>{{ brand }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <select name="supplier" class="form-select">
+                    <option value="">Tüm Tedarikçiler</option>
+                    {% for supplier in suppliers %}
+                        <option value="{{ supplier.id }}" {% if selected_supplier == supplier.id %}selected{% endif %}>{{ supplier.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-1">
+                <button type="submit" class="btn btn-primary w-100">Filtrele</button>
+            </div>
+        </form>
+
+        <form method="post">
+            {% csrf_token %}
+            <div class="mb-3 d-flex gap-2">
+                <button type="submit" class="btn btn-success" formaction="{% url 'send_bulk_trendyol' %}">
+                    <i class="fas fa-upload me-2"></i> Seçilileri Trendyol'a Gönder
+                </button>
+                
+                <div class="dropdown">
+                    <button class="btn btn-danger dropdown-toggle" type="button" id="deleteDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="fas fa-trash me-2"></i> Silme İşlemleri
+                    </button>
+                    <ul class="dropdown-menu" aria-labelledby="deleteDropdown">
+                        <li>
+                            <button type="submit" class="dropdown-item text-danger" formaction="{% url 'delete_products_from_trendyol' %}" name="action_type" value="delete_api">
+                                <i class="fas fa-cloud-upload-alt me-2"></i> Trendyol'dan Sil (API)
+                            </button>
+                        </li>
+                        <li>
+                            <button type="submit" class="dropdown-item" formaction="{% url 'delete_products_from_trendyol' %}" name="action_type" value="reset_local">
+                                <i class="fas fa-sync me-2"></i> Sadece Durumu Sıfırla (Yerel)
+                            </button>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th scope="col"><input type="checkbox" id="selectAll"></th>
+                            <th scope="col">Resim</th>
+                            <th scope="col">SKU</th>
+                            <th scope="col">Ürün Adı</th>
+                            <th scope="col">Fiyat</th>
+                            <th scope="col">Stok</th>
+                            <th scope="col">Durum</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for product in products %}
+                        <tr>
+                            <td><input type="checkbox" name="selected_products" value="{{ product.id }}"></td>
+                            <td>
+                                {% if product.images.first %}
+                                <img src="{{ product.images.first.image_url }}" alt="img" style="width: 50px; height: 50px; object-fit: cover;" class="rounded">
+                                {% else %}
+                                <span class="text-muted"><i class="fas fa-image fa-2x"></i></span>
+                                {% endif %}
+                            </td>
+                            <td>{{ product.sku }}</td>
+                            <td>{{ product.name }}</td>
+                            <td>{{ product.selling_price }} TL</td>
+                            <td>
+                                {% if product.stock_quantity > 0 %}
+                                <span class="badge bg-success">{{ product.stock_quantity }}</span>
+                                {% else %}
+                                <span class="badge bg-danger">Stok Yok</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if product.is_published_to_trendyol %}
+                                <span class="badge bg-primary">Yayında</span>
+                                {% else %}
+                                <span class="badge bg-secondary">Bekliyor</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="7" class="text-center py-4">Ürün bulunamadı.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- Pagination (Basit) -->
+            <nav aria-label="Page navigation">
+                <ul class="pagination justify-content-center">
+                    {% if products.has_previous %}
+                    <li class="page-item"><a class="page-link" href="?page=1&q={{ search_query }}&status={{ selected_status }}&category={{ selected_category }}&brand={{ selected_brand }}&supplier={{ selected_supplier }}">&laquo; İlk</a></li>
+                    <li class="page-item"><a class="page-link" href="?page={{ products.previous_page_number }}&q={{ search_query }}&status={{ selected_status }}&category={{ selected_category }}&brand={{ selected_brand }}&supplier={{ selected_supplier }}">Önceki</a></li>
+                    {% endif %}
+
+                    <li class="page-item disabled"><span class="page-link">Sayfa {{ products.number }} / {{ products.paginator.num_pages }}</span></li>
+
+                    {% if products.has_next %}
+                    <li class="page-item"><a class="page-link" href="?page={{ products.next_page_number }}&q={{ search_query }}&status={{ selected_status }}&category={{ selected_category }}&brand={{ selected_brand }}&supplier={{ selected_supplier }}">Sonraki</a></li>
+                    <li class="page-item"><a class="page-link" href="?page={{ products.paginator.num_pages }}&q={{ search_query }}&status={{ selected_status }}&category={{ selected_category }}&brand={{ selected_brand }}&supplier={{ selected_supplier }}">Son &raquo;</a></li>
+                    {% endif %}
+                </ul>
+            </nav>
+        </form>
+    </div>
+</div>
+
+<script>
+    document.getElementById('selectAll').addEventListener('change', function() {
+        var checkboxes = document.getElementsByName('selected_products');
+        for (var i = 0; i < checkboxes.length; i++) {
+            checkboxes[i].checked = this.checked;
+        }
+    });
+</script>
+{% endblock %}

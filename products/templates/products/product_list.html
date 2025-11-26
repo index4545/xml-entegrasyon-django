@@ -40,6 +40,13 @@
                     {% endfor %}
                 </select>
             </div>
+            <div class="col-md-2">
+                <select name="sort_by" class="form-select">
+                    <option value="">Varsayılan (En Yeni)</option>
+                    <option value="newest_xml" {% if sort_by == 'newest_xml' %}selected{% endif %}>XML'e Yeni Eklenen</option>
+                    <option value="oldest_xml" {% if sort_by == 'oldest_xml' %}selected{% endif %}>XML'e Eski Eklenen</option>
+                </select>
+            </div>
             <div class="col-md-1">
                 <button type="submit" class="btn btn-primary w-100">Filtrele</button>
             </div>
@@ -51,20 +58,43 @@
                 <button type="submit" class="btn btn-success" formaction="{% url 'send_bulk_trendyol' %}">
                     <i class="fas fa-upload me-2"></i> Seçilileri Trendyol'a Gönder
                 </button>
+
+                <button type="submit" class="btn btn-info text-white" formaction="{% url 'sync_all_products' %}" onclick="return confirm('Tüm ürünlerin stok ve fiyatları XML kaynağından güncellenip Trendyol\'a gönderilecek. Bu işlem uzun sürebilir. Onaylıyor musunuz?');">
+                    <i class="fas fa-sync me-2"></i> Tümünü XML ile Senkronize Et
+                </button>
                 
                 <div class="dropdown">
-                    <button class="btn btn-danger dropdown-toggle" type="button" id="deleteDropdown" data-bs-toggle="dropdown" aria-expanded="false">
-                        <i class="fas fa-trash me-2"></i> Silme İşlemleri
+                    <button class="btn btn-secondary dropdown-toggle" type="button" id="actionDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="fas fa-cog me-2"></i> İşlemler
                     </button>
-                    <ul class="dropdown-menu" aria-labelledby="deleteDropdown">
+                    <ul class="dropdown-menu" aria-labelledby="actionDropdown">
+                        <li><h6 class="dropdown-header">Trendyol İşlemleri</h6></li>
                         <li>
-                            <button type="submit" class="dropdown-item text-danger" formaction="{% url 'delete_products_from_trendyol' %}" name="action_type" value="delete_api">
-                                <i class="fas fa-cloud-upload-alt me-2"></i> Trendyol'dan Sil (API)
+                            <button type="submit" class="dropdown-item text-warning" formaction="{% url 'manage_trendyol_products' %}" name="action_type" value="archive_api">
+                                <i class="fas fa-archive me-2"></i> Arşivle (Satışı Durdur)
                             </button>
                         </li>
                         <li>
-                            <button type="submit" class="dropdown-item" formaction="{% url 'delete_products_from_trendyol' %}" name="action_type" value="reset_local">
-                                <i class="fas fa-sync me-2"></i> Sadece Durumu Sıfırla (Yerel)
+                            <button type="submit" class="dropdown-item text-success" formaction="{% url 'manage_trendyol_products' %}" name="action_type" value="unarchive_api">
+                                <i class="fas fa-box-open me-2"></i> Arşivden Çıkar (Satışa Aç)
+                            </button>
+                        </li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li>
+                            <button type="submit" class="dropdown-item text-danger" formaction="{% url 'manage_trendyol_products' %}" name="action_type" value="delete_api" onclick="return confirm('Seçili ürünleri Trendyol\'dan silmek istediğinize emin misiniz?');">
+                                <i class="fas fa-trash-alt me-2"></i> Trendyol'dan Sil (Kalıcı)
+                            </button>
+                        </li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><h6 class="dropdown-header">Yerel İşlemler</h6></li>
+                        <li>
+                            <button type="submit" class="dropdown-item" formaction="{% url 'sync_selected_products' %}">
+                                <i class="fas fa-sync-alt me-2"></i> Seçilileri XML ile Senkronize Et
+                            </button>
+                        </li>
+                        <li>
+                            <button type="submit" class="dropdown-item" formaction="{% url 'manage_trendyol_products' %}" name="action_type" value="reset_local">
+                                <i class="fas fa-history me-2"></i> Durumu Sıfırla (Yayında Değil Yap)
                             </button>
                         </li>
                     </ul>

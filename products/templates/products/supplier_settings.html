@@ -25,7 +25,7 @@
                 <h5 class="card-title mb-0">{{ selected_supplier.name }} - Genel Ayarlar</h5>
             </div>
             <div class="card-body">
-                <form method="post">
+                <form method="post" enctype="multipart/form-data">
                     {% csrf_token %}
                     <div class="row mb-3">
                         <div class="col-md-6">
@@ -95,10 +95,30 @@
                         {{ form.selling_vat_rate }}
                     </div>
 
-                    <div class="mb-3">
-                        <label class="form-label">Otomatik Güncelleme Aralığı (Dakika)</label>
-                        {{ form.auto_update_interval }}
-                        <div class="form-text">0 girilirse otomatik güncelleme kapalı olur.</div>
+                    <div class="mb-3 border-top pt-3">
+                        <h6 class="mb-3">Otomasyon ve Hata Yönetimi</h6>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <label class="form-label">Otomatik Güncelleme Aralığı (Dakika)</label>
+                                {{ form.auto_update_interval }}
+                                <div class="form-text">0 girilirse otomatik güncelleme kapalı olur.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Batch Kontrol Aralığı (Dakika)</label>
+                                {{ form.batch_check_interval }}
+                                <div class="form-text">Trendyol işlem sonuçlarını kontrol etme sıklığı.</div>
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <div class="form-check form-switch">
+                                {{ form.zero_stock_on_error }}
+                                <label class="form-check-label" for="{{ form.zero_stock_on_error.id_for_label }}">Hata Durumunda Stoğu Sıfırla</label>
+                                <div class="form-text text-danger">
+                                    <i class="fas fa-exclamation-triangle me-1"></i>
+                                    Etkinleştirilirse, güncelleme sırasında hata alınan ürünlerin stoğu otomatik olarak 0 yapılır. Ürün yayından kaldırılmaz.
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="row mb-3">
@@ -121,6 +141,56 @@
                                 {{ form.stop_price_update }}
                                 <label class="form-check-label" for="{{ form.stop_price_update.id_for_label }}">Fiyat Güncellemesi Yapılmasın</label>
                             </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3 border-top pt-3">
+                        <h6 class="mb-3">Görsel Çerçeve Ayarları</h6>
+                        <div class="form-check form-switch mb-2">
+                            {{ form.use_frame }}
+                            <label class="form-check-label" for="{{ form.use_frame.id_for_label }}">Ürün Görsellerine Çerçeve Ekle</label>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label">Çerçeve Görseli (PNG)</label>
+                            {{ form.frame_image }}
+                            <div class="form-text">Şeffaf arkaplanlı bir PNG dosyası yükleyin. Bu çerçeve ürün görsellerinin üzerine eklenecektir.</div>
+                        </div>
+                        
+                        <!-- Hazır Şablonlar -->
+                        {% if frame_templates %}
+                        <div class="mb-3">
+                            <label class="form-label">Veya Hazır Şablonlardan Seçin:</label>
+                            <div class="d-flex flex-wrap gap-2">
+                                {% for tpl in frame_templates %}
+                                <div class="card" style="width: 100px;">
+                                    <img src="{{ tpl.url }}" class="card-img-top p-1" alt="{{ tpl.name }}" style="height: 100px; object-fit: contain; background: #f8f9fa;">
+                                    <div class="card-body p-1 text-center">
+                                        <button type="submit" name="select_template" value="1" onclick="document.getElementById('template_name_input').value='{{ tpl.name }}'" class="btn btn-xs btn-outline-primary w-100">Seç</button>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <input type="hidden" name="template_name" id="template_name_input">
+                        </div>
+                        {% endif %}
+
+                        {% if selected_supplier.settings.frame_image %}
+                        <div class="mb-2">
+                            <img src="{{ selected_supplier.settings.frame_image.url }}" alt="Mevcut Çerçeve" style="max-height: 100px; border: 1px solid #ddd;">
+                            <small class="d-block text-muted">Mevcut Çerçeve</small>
+                        </div>
+                        {% endif %}
+                        
+                        <!-- Test Button -->
+                        <div class="mt-3">
+                            <button type="button" id="testFrameBtn" class="btn btn-sm btn-info text-white">
+                                <i class="fas fa-vial me-1"></i> Çerçeveyi Test Et (3 Ürün)
+                            </button>
+                        </div>
+                        
+                        <!-- Test Results -->
+                        <div id="frameTestResults" class="mt-3 row g-3" style="display:none;">
+                            <!-- Results will be injected here -->
                         </div>
                     </div>
 
@@ -325,6 +395,66 @@ document.addEventListener('DOMContentLoaded', function() {
         idInput.value = '';
         form.reset();
     });
+
+    // Frame Test Script
+    const testFrameBtn = document.getElementById('testFrameBtn');
+    const resultsContainer = document.getElementById('frameTestResults');
+    
+    if (testFrameBtn) {
+        testFrameBtn.addEventListener('click', function() {
+            const supplierId = "{{ selected_supplier.id }}";
+            this.disabled = true;
+            this.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i> İşleniyor...';
+            resultsContainer.style.display = 'none';
+            resultsContainer.innerHTML = '';
+            
+            fetch(`/api/test-frame/?supplier_id=${supplierId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        alert('Hata: ' + data.error);
+                        return;
+                    }
+                    
+                    if (data.results.length === 0) {
+                        alert('Test edilecek uygun ürün veya görsel bulunamadı.');
+                        return;
+                    }
+
+                    data.results.forEach(item => {
+                        const col = document.createElement('div');
+                        col.className = 'col-md-4';
+                        col.innerHTML = `
+                            <div class="card h-100">
+                                <div class="card-body p-2 text-center">
+                                    <h6 class="card-title small text-truncate" title="${item.name}">${item.name}</h6>
+                                    <div class="d-flex justify-content-center align-items-center gap-2">
+                                        <div style="width:48%">
+                                            <img src="${item.original_url}" class="img-fluid border" style="max-height:100px; object-fit: contain;">
+                                            <div class="small text-muted mt-1">Orijinal</div>
+                                        </div>
+                                        <div style="width:48%">
+                                            <img src="${item.processed_b64}" class="img-fluid border" style="max-height:100px; object-fit: contain;">
+                                            <div class="small text-muted mt-1">Çerçeveli</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        resultsContainer.appendChild(col);
+                    });
+                    resultsContainer.style.display = 'flex';
+                })
+                .catch(err => {
+                    console.error(err);
+                    alert('Bir hata oluştu.');
+                })
+                .finally(() => {
+                    testFrameBtn.disabled = false;
+                    testFrameBtn.innerHTML = '<i class="fas fa-vial me-1"></i> Çerçeveyi Test Et (3 Ürün)';
+                });
+        });
+    }
 });
 </script>
 {% endblock %}

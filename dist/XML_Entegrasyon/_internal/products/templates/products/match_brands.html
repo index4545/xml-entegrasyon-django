@@ -1,0 +1,158 @@
+{% extends 'products/base.html' %}
+
+{% block title %}Marka Eşleştirme{% endblock %}
+
+{% block header %}Marka Eşleştirme{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h3>Marka Eşleştirme</h3>
+    <form method="get" class="d-flex align-items-center">
+        <select name="supplier_id" class="form-select" onchange="this.form.submit()">
+            <option value="">Tüm Tedarikçiler</option>
+            {% for supplier in suppliers %}
+            <option value="{{ supplier.id }}" {% if selected_supplier_id == supplier.id %}selected{% endif %}>{{ supplier.name }}</option>
+            {% endfor %}
+        </select>
+    </form>
+</div>
+
+<div class="card card-custom">
+    <div class="card-body">
+        <h5 class="card-title">Eşleşmemiş Markalar</h5>
+        <p class="card-text">Aşağıdaki XML markaları için Trendyol Marka ID'lerini arayarak seçiniz.</p>
+        
+        <form method="post">
+            {% csrf_token %}
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>XML Marka Adı</th>
+                            <th>Trendyol Marka Ara</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for brand in missing_brands %}
+                        <tr>
+                            <td>{{ brand }}</td>
+                            <td>
+                                <div class="input-group">
+                                    <input type="text" class="form-control brand-search" data-target="brand_{{ forloop.counter }}" placeholder="Marka Ara...">
+                                    <input type="hidden" name="brand_{{ brand }}" id="brand_{{ forloop.counter }}">
+                                    <span class="input-group-text" id="selected_label_{{ forloop.counter }}">-</span>
+                                </div>
+                                <div class="list-group search-results" id="results_{{ forloop.counter }}" style="position: absolute; z-index: 1000; display: none; width: 300px;"></div>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="2" class="text-center">Tüm markalar eşleştirilmiş!</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% if missing_brands %}
+            <button type="submit" class="btn btn-primary">Kaydet</button>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+<div class="card card-custom mt-4">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="card-title mb-0">Eşleşmiş Markalar</h5>
+            {% if existing_mappings %}
+            <form method="post" onsubmit="return confirm('DİKKAT: Tüm marka eşleştirmelerini silmek istediğinize emin misiniz? Bu işlem geri alınamaz!');">
+                {% csrf_token %}
+                <input type="hidden" name="delete_all_mappings" value="true">
+                <button type="submit" class="btn btn-danger"><i class="fas fa-trash-alt me-2"></i>Tümünü Sil</button>
+            </form>
+            {% endif %}
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>XML Marka Adı</th>
+                        <th>Trendyol Marka ID</th>
+                        <th>İşlem</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for mapping in existing_mappings %}
+                    <tr>
+                        <td>{{ mapping.xml_brand_name }}</td>
+                        <td>{{ mapping.trendyol_brand_id }}</td>
+                        <td>
+                            <form method="post" style="display:inline;">
+                                {% csrf_token %}
+                                <input type="hidden" name="delete_mapping" value="{{ mapping.id }}">
+                                <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Bu eşleştirmeyi silmek istediğinize emin misiniz?')"><i class="fas fa-trash"></i></button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="3" class="text-center">Henüz eşleştirilmiş marka yok.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const searchInputs = document.querySelectorAll('.brand-search');
+        
+        searchInputs.forEach(input => {
+            input.addEventListener('input', function() {
+                const query = this.value;
+                const targetId = this.dataset.target;
+                const resultsDiv = this.parentElement.nextElementSibling;
+                
+                if (query.length < 2) {
+                    resultsDiv.style.display = 'none';
+                    return;
+                }
+
+                fetch(`{% url 'search_trendyol_brands' %}?q=${query}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        resultsDiv.innerHTML = '';
+                        if (data.results && data.results.length > 0) {
+                            data.results.forEach(brand => {
+                                const item = document.createElement('a');
+                                item.classList.add('list-group-item', 'list-group-item-action');
+                                item.href = '#';
+                                item.textContent = brand.name;
+                                item.onclick = function(e) {
+                                    e.preventDefault();
+                                    document.getElementById(targetId).value = brand.id;
+                                    document.getElementById('selected_label_' + targetId.split('_')[1]).textContent = brand.name;
+                                    resultsDiv.style.display = 'none';
+                                    input.value = ''; // Clear search
+                                };
+                                resultsDiv.appendChild(item);
+                            });
+                            resultsDiv.style.display = 'block';
+                        } else {
+                            resultsDiv.style.display = 'none';
+                        }
+                    });
+            });
+            
+            // Hide results when clicking outside
+            document.addEventListener('click', function(e) {
+                if (e.target !== input) {
+                    input.parentElement.nextElementSibling.style.display = 'none';
+                }
+            });
+        });
+    });
+</script>
+{% endblock %}

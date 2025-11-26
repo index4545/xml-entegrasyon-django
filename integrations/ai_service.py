@@ -128,6 +128,90 @@ class GeminiService:
         
         raise Exception(f"REST API Hatası: {str(last_error)}")
 
+    def _get_category_match_prompt(self, product_name, description, candidates):
+        candidates_str = "\n".join([f"ID: {c['id']}, Path: {c.get('path', c['name'])}" for c in candidates])
+        return f"""
+        Sen bir e-ticaret kategori uzmanısın. Aşağıdaki ürün için verilen aday kategoriler arasından EN UYGUN olanı seçmelisin.
+
+        ÜRÜN BİLGİLERİ:
+        Ürün Adı: {product_name}
+        Açıklama: {description[:500]}...
+
+        ADAY KATEGORİLER:
+        {candidates_str}
+
+        GÖREV:
+        1. Ürün adını ve açıklamasını dikkatlice analiz et. Ürünün tam işlevini belirle.
+        2. Aday kategorilerin tam yollarını (Path) incele. Sadece isme değil, kategori yoluna da bak.
+        3. Yanıltıcı kelimelere dikkat et. (Örn: "Çelik Süzgeç" için "Çay Süzgeci" seçme, eğer ürün çay için değilse).
+        4. En spesifik ve doğru "leaf" (uç) kategoriyi seç.
+        5. ASLA "None" döndürme.
+
+        ÇIKTI FORMATI (JSON):
+        {{
+            "selected_category_id": 12345, // Seçilen ID (Integer)
+            "reason": "Seçim nedeni"
+        }}
+        Sadece JSON çıktısı ver.
+        """
+
+    def match_category_with_key(self, product_name, description, candidates, api_key):
+        """
+        Matches a product to a category using AI.
+        """
+        prompt = self._get_category_match_prompt(product_name, description, candidates)
+        
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={api_key}"
+        
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"response_mime_type": "application/json"}
+        }
+        
+        max_retries = 3
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, headers=headers, json=payload, timeout=45)
+                
+                if response.status_code == 429:
+                    # Rate limit hit
+                    if attempt < max_retries - 1:
+                        # Wait 60 seconds for quota reset (Free tier usually resets every minute)
+                        time.sleep(62) 
+                        continue
+                    else:
+                        error_json = response.json()
+                        error_msg = error_json.get('error', {}).get('message', response.text)
+                        raise Exception(f"API Hatası (429 - Kota Aşıldı): {error_msg}")
+
+                if not response.ok:
+                    raise Exception(f"API Hatası ({response.status_code}): {response.text}")
+                
+                result = response.json()
+                if 'candidates' in result and result['candidates']:
+                    text = result['candidates'][0]['content']['parts'][0]['text']
+                    cleaned_text = self._clean_response(text)
+                    try:
+                        data = json.loads(cleaned_text)
+                        return data.get('selected_category_id')
+                    except json.JSONDecodeError:
+                        raise Exception(f"JSON Ayrıştırma Hatası: {cleaned_text}")
+                else:
+                    raise Exception(f"API Yanıtı Boş veya Aday Yok: {result}")
+
+            except Exception as e:
+                last_error = e
+                if "429" not in str(e) and attempt < max_retries - 1:
+                    time.sleep(2) # Short wait for other errors
+                    continue
+                if "429" in str(e):
+                    raise e # Re-raise 429 immediately if we ran out of retries
+        
+        raise Exception(f"AI Servis Hatası: {str(last_error)}")
+
     def _clean_response(self, text):
         if text.strip().startswith("```json"):
             text = text.strip()[7:]

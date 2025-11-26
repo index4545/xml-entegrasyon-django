@@ -2,6 +2,7 @@ import requests
 import xmltodict
 from django.core.management.base import BaseCommand
 from products.models import Supplier, Product, ProductImage
+from products.utils import apply_frame_to_image
 from decimal import Decimal
 
 class Command(BaseCommand):
@@ -157,12 +158,30 @@ class Command(BaseCommand):
             # Önceki resimleri temizle (Basit senaryo)
             product.images.all().delete()
             
+            # Frame Settings
+            use_frame = False
+            frame_path = None
+            if hasattr(supplier, 'settings') and supplier.settings.use_frame and supplier.settings.frame_image:
+                use_frame = True
+                frame_path = supplier.settings.frame_image.path
+
+            def create_product_image(url, is_primary=False):
+                pi = ProductImage(product=product, image_url=url, is_primary=is_primary)
+                if use_frame and frame_path:
+                    try:
+                        processed = apply_frame_to_image(url, frame_path)
+                        if processed:
+                            pi.processed_image.save(processed.name, processed, save=False)
+                    except Exception as e:
+                        print(f"Frame error: {e}")
+                pi.save()
+            
             # Image1, Image2... Image5 kontrolü
             for i in range(1, 6):
                 img_key = f'Image{i}'
                 img_url = item.get(img_key)
                 if img_url:
-                    ProductImage.objects.create(product=product, image_url=img_url, is_primary=(i==1))
+                    create_product_image(img_url, is_primary=(i==1))
 
             # Diğer olası resim yapıları (Eski koddan kalan destek)
             images = item.get('Resimler') or item.get('Images') or item.get('images')
@@ -182,13 +201,13 @@ class Command(BaseCommand):
                 
                 for img_url in img_list:
                     if isinstance(img_url, str):
-                        ProductImage.objects.create(product=product, image_url=img_url)
+                        create_product_image(img_url)
                     elif isinstance(img_url, dict):
                          # Bazen <Resim>url</Resim> dict olarak gelebilir xmltodict ile
                          # Genelde #text key'i olur
                          url = img_url.get('#text') or img_url.get('url')
                          if url:
-                             ProductImage.objects.create(product=product, image_url=url)
+                             create_product_image(url)
 
 
             if created:

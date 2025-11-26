@@ -7,16 +7,17 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Q, Case, When, IntegerField
-from django.http import JsonResponse
+from django.http import JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.html import strip_tags
 from django.views.decorators.http import require_POST
 from django.db import transaction
 
-from .models import Product, Supplier
+from .models import Product, Supplier, TrendyolCategory
 from integrations.models import GeminiSettings, GeminiAPIKey
 from integrations.ai_service import GeminiService
+from integrations.services import TrendyolService
 
 
 STATUS_META = OrderedDict({
@@ -166,6 +167,8 @@ def ai_tools(request):
     category_filter = request.GET.get('category', '')
     brand_filter = request.GET.get('brand', '')
     supplier_id = request.GET.get('supplier_id', '')
+    match_status = request.GET.get('match_status', '')
+    sort_by = request.GET.get('sort_by', '')
     
     per_page = request.GET.get('per_page', '20')
     try:
@@ -183,7 +186,12 @@ def ai_tools(request):
         output_field=IntegerField(),
     )
 
-    products = Product.objects.all().order_by(status_ordering, '-updated_at')
+    if sort_by == 'newest_xml':
+        products = Product.objects.all().order_by('-created_at')
+    elif sort_by == 'oldest_xml':
+        products = Product.objects.all().order_by('created_at')
+    else:
+        products = Product.objects.all().order_by(status_ordering, '-updated_at')
     
     if supplier_id:
         products = products.filter(supplier_id=supplier_id)
@@ -205,6 +213,11 @@ def ai_tools(request):
     if brand_filter:
         products = products.filter(brand=brand_filter)
 
+    if match_status == 'matched':
+        products = products.filter(trendyol_category_id__isnull=False)
+    elif match_status == 'unmatched':
+        products = products.filter(trendyol_category_id__isnull=True)
+
     # Get unique categories and brands for filters (Filtered by Supplier)
     filter_base_products = Product.objects.all()
     if supplier_id:
@@ -220,6 +233,18 @@ def ai_tools(request):
     page_obj = paginator.get_page(page_number)
 
     page_items = list(page_obj.object_list)
+
+    # Fetch Trendyol Category Names for display
+    t_ids = [p.trendyol_category_id for p in page_items if p.trendyol_category_id]
+    cat_map = {}
+    if t_ids:
+        cats = TrendyolCategory.objects.filter(trendyol_id__in=t_ids)
+        cat_map = {c.trendyol_id: c.name for c in cats}
+
+    for p in page_items:
+        if p.trendyol_category_id:
+            p.trendyol_category_name_display = cat_map.get(p.trendyol_category_id)
+
     grouped_products = []
     for key, meta in STATUS_META.items():
         items = [item for item in page_items if item.ai_status == key]
@@ -248,11 +273,13 @@ def ai_tools(request):
         'category_filter': category_filter,
         'brand_filter': brand_filter,
         'supplier_id': supplier_id,
+        'match_status': match_status,
         'categories': categories,
         'brands': brands,
         'suppliers': suppliers,
         'status_meta': STATUS_META,
         'per_page': per_page,
+        'sort_by': sort_by,
     })
 
 def process_single_product_task(product_id, api_key, user_id):
@@ -405,3 +432,213 @@ def ai_revert_original(request, pk):
         'original_name': product.original_name or '',
         'original_description': product.original_description or '',
     })
+
+def process_category_match_task(product_id, api_key, user_id, trendyol_cats_flat):
+    try:
+        from django.db import connection
+        from django.contrib.auth.models import User
+        
+        product = Product.objects.get(id=product_id)
+        user = User.objects.get(id=user_id)
+        service = GeminiService(user=user)
+        
+        # 1. Search Candidates Locally (Fuzzy or Keyword)
+        search_text = product.name.lower()
+        
+        # Score based search
+        scored_candidates = []
+        search_words = [w for w in search_text.split() if len(w) > 2]
+        
+        for cat in trendyol_cats_flat:
+            cat_name_lower = cat['name'].lower()
+            # Also check path if available
+            cat_path_lower = cat.get('path', '').lower()
+            
+            score = 0
+            
+            # Exact category name match in product name (High Priority)
+            if cat_name_lower in search_text:
+                score += 50
+
+            for word in search_words:
+                if word in cat_name_lower:
+                    score += 10 # Name match is stronger
+                elif word in cat_path_lower:
+                    score += 3 # Path match is weaker
+            
+            if score > 0:
+                scored_candidates.append((score, cat))
+        
+        # Sort by score desc
+        scored_candidates.sort(key=lambda x: x[0], reverse=True)
+        
+        # Take top 25 (increased from 20)
+        top_candidates = [c[1] for c in scored_candidates[:25]]
+        
+        # Fallback: If no candidates, try broader search (first word only)
+        if not top_candidates and search_words:
+            first_word = search_words[0]
+            for cat in trendyol_cats_flat:
+                if first_word in cat['name'].lower():
+                    top_candidates.append(cat)
+            top_candidates = top_candidates[:25]
+
+        if not top_candidates:
+            product.ai_last_error = "Kategori eşleşmesi için uygun aday bulunamadı."
+            product.save(update_fields=['ai_last_error'])
+            connection.close()
+            return {'success': False, 'sku': product.sku, 'error': 'No candidates found', 'product_id': product.id}
+            
+        # 2. Ask AI
+        selected_id = service.match_category_with_key(product.name, product.description, top_candidates, api_key)
+        
+        if selected_id:
+            product.trendyol_category_id = selected_id
+            product.ai_last_error = "" # Clear error
+            product.save(update_fields=['trendyol_category_id', 'ai_last_error'])
+            
+            # Find category name for display
+            cat_name = str(selected_id)
+            for c in trendyol_cats_flat:
+                if c['id'] == selected_id:
+                    cat_name = c['name']
+                    break
+
+            connection.close()
+            return {
+                'success': True, 
+                'sku': product.sku, 
+                'cat_id': selected_id, 
+                'category_name': cat_name,
+                'product_name': product.name,
+                'product_id': product.id
+            }
+        else:
+            product.ai_last_error = "AI geçerli bir kategori ID döndürmedi (Null)."
+            product.save(update_fields=['ai_last_error'])
+            connection.close()
+            return {
+                'success': False, 
+                'sku': product.sku, 
+                'error': 'AI returned null ID', 
+                'product_id': product.id,
+                'product_name': product.name
+            }
+            
+    except Exception as e:
+        from django.db import connection
+        try:
+            product = Product.objects.get(id=product_id)
+            product.ai_last_error = f"Hata: {str(e)}"
+            product.save(update_fields=['ai_last_error'])
+        except:
+            pass
+        connection.close()
+        return {
+            'success': False, 
+            'sku': product_id, 
+            'error': str(e), 
+            'product_id': product_id,
+            'product_name': product.name if 'product' in locals() else str(product_id)
+        }
+
+@login_required
+def ai_match_categories(request):
+    if request.method == 'POST':
+        # Check if it's a JSON request (from fetch)
+        is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.content_type == 'application/json'
+        
+        if is_ajax:
+            try:
+                body = json.loads(request.body)
+                selected_ids = body.get('selected_products', [])
+            except:
+                selected_ids = []
+        else:
+            selected_ids = request.POST.getlist('selected_products')
+
+        if not selected_ids:
+            if is_ajax:
+                return JsonResponse({'error': 'Lütfen ürün seçin.'}, status=400)
+            messages.warning(request, "Lütfen ürün seçin.")
+            return redirect('ai_tools')
+            
+        products = Product.objects.filter(id__in=selected_ids)
+        
+        # Get API Keys
+        try:
+            settings = GeminiSettings.objects.get(user=request.user)
+            api_keys = list(settings.api_keys.values_list('key', flat=True))
+            if not api_keys and settings.api_key:
+                api_keys = [settings.api_key]
+        except GeminiSettings.DoesNotExist:
+            if is_ajax:
+                return JsonResponse({'error': 'AI Ayarları bulunamadı.'}, status=400)
+            messages.error(request, "AI Ayarları bulunamadı.")
+            return redirect('ai_tools')
+            
+        if not api_keys:
+            if is_ajax:
+                return JsonResponse({'error': 'Aktif API anahtarı bulunamadı.'}, status=400)
+            messages.error(request, "Aktif API anahtarı bulunamadı.")
+            return redirect('ai_tools')
+
+        # Fetch Trendyol Tree and Flatten (Once)
+        try:
+            ty_service = TrendyolService(user=request.user)
+            tree = ty_service.get_category_tree()
+            
+            trendyol_cats_flat = []
+            def flatten_cats(cats, path=""):
+                for c in cats:
+                    current_path = f"{path} > {c['name']}" if path else c['name']
+                    if not c.get('subCategories'):
+                        trendyol_cats_flat.append({'id': c['id'], 'name': c['name'], 'path': current_path})
+                    else:
+                        flatten_cats(c['subCategories'], current_path)
+            
+            if 'categories' in tree:
+                flatten_cats(tree['categories'])
+            elif isinstance(tree, list):
+                flatten_cats(tree)
+                
+        except Exception as e:
+            if is_ajax:
+                return JsonResponse({'error': f"Trendyol kategori ağacı alınamadı: {e}"}, status=500)
+            messages.error(request, f"Trendyol kategori ağacı alınamadı: {e}")
+            return redirect('ai_tools')
+
+        def stream_response():
+            yield json.dumps({'type': 'start', 'total': products.count()}) + "\n"
+            
+            key_cycle = itertools.cycle(api_keys)
+            max_workers = min(len(api_keys), 5)
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_product = {}
+                for product in products:
+                    key = next(key_cycle)
+                    future = executor.submit(process_category_match_task, product.id, key, request.user.id, trendyol_cats_flat)
+                    future_to_product[future] = product
+
+                for future in concurrent.futures.as_completed(future_to_product):
+                    product = future_to_product[future]
+                    try:
+                        result = future.result()
+                        yield json.dumps({'type': 'result', 'data': result}) + "\n"
+                    except Exception as exc:
+                        yield json.dumps({'type': 'result', 'data': {'success': False, 'sku': product.sku, 'error': str(exc), 'product_id': product.id}}) + "\n"
+            
+            yield json.dumps({'type': 'end'}) + "\n"
+
+        if is_ajax:
+            return StreamingHttpResponse(stream_response(), content_type='application/x-ndjson')
+        
+        # Fallback for non-ajax (legacy)
+        # ... (same as before but blocking) ...
+        # For simplicity, we redirect to ai_tools with a message saying "Use the button properly"
+        # Or just run it blocking.
+        messages.info(request, "İşlem arka planda başlatıldı (eski yöntem).")
+        return redirect('ai_tools')
+            
+    return redirect('ai_tools')

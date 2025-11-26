@@ -1,0 +1,266 @@
+{% extends 'products/base.html' %}
+
+{% block title %}Kategori Eşleştirme{% endblock %}
+
+{% block header %}Kategori Eşleştirme{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h3>Kategori Eşleştirme</h3>
+    <div class="d-flex gap-2">
+        <form action="{% url 'auto_match_categories' %}" method="post">
+            {% csrf_token %}
+            {% if selected_supplier_id %}
+            <input type="hidden" name="supplier_id" value="{{ selected_supplier_id }}">
+            {% endif %}
+            <button type="submit" class="btn btn-info text-white"><i class="fas fa-magic me-2"></i> Otomatik Eşleştir</button>
+        </form>
+        <form action="{% url 'sync_xml' %}" method="post">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-warning"><i class="fas fa-sync me-2"></i> XML'den Kategorileri Güncelle</button>
+        </form>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card card-custom mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label">Tedarikçi</label>
+                <select name="supplier_id" class="form-select" onchange="this.form.submit()">
+                    <option value="">Tüm Tedarikçiler</option>
+                    {% for supplier in suppliers %}
+                    <option value="{{ supplier.id }}" {% if selected_supplier_id == supplier.id %}selected{% endif %}>{{ supplier.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Durum</label>
+                <select name="status" class="form-select" onchange="this.form.submit()">
+                    <option value="all" {% if status_filter == 'all' %}selected{% endif %}>Tümü</option>
+                    <option value="matched" {% if status_filter == 'matched' %}selected{% endif %}>Eşleşmiş</option>
+                    <option value="unmatched" {% if status_filter == 'unmatched' %}selected{% endif %}>Eşleşmemiş</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Arama</label>
+                <div class="input-group">
+                    <input type="text" name="q" class="form-control" placeholder="XML Kategori Ara..." value="{{ search_query }}">
+                    <button class="btn btn-outline-secondary" type="submit"><i class="fas fa-search"></i></button>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <a href="{% url 'match_categories' %}{% if selected_supplier_id %}?supplier_id={{ selected_supplier_id }}{% endif %}" class="btn btn-secondary w-100">Temizle</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card card-custom">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h5 class="card-title mb-0">Kategori Listesi ({{ total_count }})</h5>
+            {% if status_filter != 'unmatched' %}
+            <form method="post" onsubmit="return confirm('DİKKAT: Tüm kategori eşleştirmelerini silmek istediğinize emin misiniz? Bu işlem geri alınamaz!');" style="display:inline-block;">
+                {% csrf_token %}
+                <input type="hidden" name="delete_all_mappings" value="true">
+                <button type="submit" class="btn btn-sm btn-danger"><i class="fas fa-trash-alt me-2"></i>Tümünü Sil</button>
+            </form>
+            {% endif %}
+        </div>
+
+        <form method="post">
+            {% csrf_token %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th style="width: 35%;">XML Kategori Yolu</th>
+                            <th style="width: 35%;">Trendyol Kategori</th>
+                            <th style="width: 15%;">Komisyon</th>
+                            <th style="width: 15%;">İşlem</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in page_items %}
+                        <tr>
+                            <td>
+                                <div class="text-break">{{ item.xml_path }}</div>
+                            </td>
+                            <td>
+                                {% if item.mapping %}
+                                    <div class="fw-bold text-success">
+                                        <i class="fas fa-check-circle me-1"></i>
+                                        {% if item.mapping.trendyol_category_name %}
+                                            {{ item.mapping.trendyol_category_name }}
+                                        {% else %}
+                                            ID: {{ item.mapping.trendyol_category_id }}
+                                        {% endif %}
+                                    </div>
+                                    <small class="text-muted">ID: {{ item.mapping.trendyol_category_id }}</small>
+                                {% else %}
+                                    <div class="position-relative">
+                                        <div class="input-group input-group-sm">
+                                            <input type="text" class="form-control cat-search" 
+                                                   data-target="cat_{{ forloop.counter }}" 
+                                                   placeholder="Trendyol'da ara..." autocomplete="off">
+                                            <span class="input-group-text" id="selected_label_{{ forloop.counter }}">-</span>
+                                        </div>
+                                        <!-- Hidden inputs to store selection -->
+                                        <input type="hidden" name="cat_id_{{ item.xml_path }}" id="cat_{{ forloop.counter }}">
+                                        <input type="hidden" name="cat_name_{{ item.xml_path }}" id="cat_name_{{ forloop.counter }}">
+                                        
+                                        <div class="list-group search-results shadow" id="results_{{ forloop.counter }}" 
+                                             style="position: absolute; z-index: 1050; display: none; width: 100%; max-height: 200px; overflow-y: auto; top: 100%;">
+                                        </div>
+                                    </div>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.mapping %}
+                                    {% if item.commission_rate is not None %}
+                                        <span class="badge {% if item.is_default_commission %}bg-warning text-dark{% else %}bg-success{% endif %}">
+                                            %{{ item.commission_rate }}
+                                            {% if item.is_default_commission %}(Varsayılan){% endif %}
+                                        </span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">-</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.mapping %}
+                                    <div class="btn-group btn-group-sm">
+                                        <a href="{% url 'map_attributes' item.mapping.id %}" class="btn btn-info text-white" title="Özellikleri Eşleştir">
+                                            <i class="fas fa-list-ul"></i>
+                                        </a>
+                                        <button type="submit" name="delete_mapping" value="{{ item.mapping.id }}" class="btn btn-danger" onclick="return confirm('Bu eşleştirmeyi silmek istediğinize emin misiniz?')">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                {% else %}
+                                    <span class="badge bg-light text-dark border">Seçim Bekleniyor</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center py-4">
+                                <div class="text-muted">
+                                    <i class="fas fa-info-circle fa-2x mb-2"></i><br>
+                                    Kriterlere uygun kategori bulunamadı.
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            
+            {% if page_items %}
+            <div class="d-flex justify-content-end mt-3">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-save me-2"></i> Sayfadaki Değişiklikleri Kaydet
+                </button>
+            </div>
+            {% endif %}
+        </form>
+
+        <!-- Pagination -->
+        {% if page_obj.has_other_pages %}
+        <nav aria-label="Page navigation" class="mt-4">
+            <ul class="pagination justify-content-center">
+                {% if page_obj.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ page_obj.previous_page_number }}&supplier_id={{ selected_supplier_id|default:'' }}&status={{ status_filter }}&q={{ search_query }}">&laquo; Önceki</a>
+                </li>
+                {% else %}
+                <li class="page-item disabled"><span class="page-link">&laquo; Önceki</span></li>
+                {% endif %}
+
+                {% for i in page_obj.paginator.page_range %}
+                    {% if page_obj.number == i %}
+                    <li class="page-item active"><span class="page-link">{{ i }}</span></li>
+                    {% elif i > page_obj.number|add:'-3' and i < page_obj.number|add:'3' %}
+                    <li class="page-item">
+                        <a class="page-link" href="?page={{ i }}&supplier_id={{ selected_supplier_id|default:'' }}&status={{ status_filter }}&q={{ search_query }}">{{ i }}</a>
+                    </li>
+                    {% endif %}
+                {% endfor %}
+
+                {% if page_obj.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ page_obj.next_page_number }}&supplier_id={{ selected_supplier_id|default:'' }}&status={{ status_filter }}&q={{ search_query }}">Sonraki &raquo;</a>
+                </li>
+                {% else %}
+                <li class="page-item disabled"><span class="page-link">Sonraki &raquo;</span></li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const searchInputs = document.querySelectorAll('.cat-search');
+        
+        searchInputs.forEach(input => {
+            input.addEventListener('input', function() {
+                const query = this.value;
+                const targetId = this.dataset.target; // e.g. cat_1
+                const resultsDiv = document.getElementById('results_' + targetId.split('_')[1]);
+                
+                if (query.length < 3) {
+                    resultsDiv.style.display = 'none';
+                    return;
+                }
+
+                // Debounce could be added here
+                fetch(`{% url 'search_trendyol_categories' %}?q=${query}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        resultsDiv.innerHTML = '';
+                        if (data.results && data.results.length > 0) {
+                            data.results.forEach(cat => {
+                                const item = document.createElement('a');
+                                item.classList.add('list-group-item', 'list-group-item-action');
+                                item.href = '#';
+                                item.innerHTML = `<small>${cat.name}</small>`;
+                                item.onclick = function(e) {
+                                    e.preventDefault();
+                                    // Set hidden inputs
+                                    document.getElementById(targetId).value = cat.id;
+                                    document.getElementById('cat_name_' + targetId.split('_')[1]).value = cat.name;
+                                    
+                                    // Update UI
+                                    document.getElementById('selected_label_' + targetId.split('_')[1]).textContent = cat.name;
+                                    document.getElementById('selected_label_' + targetId.split('_')[1]).classList.add('bg-success', 'text-white');
+                                    
+                                    resultsDiv.style.display = 'none';
+                                    input.value = ''; // Clear search input
+                                };
+                                resultsDiv.appendChild(item);
+                            });
+                            resultsDiv.style.display = 'block';
+                        } else {
+                            resultsDiv.innerHTML = '<div class="list-group-item text-muted">Sonuç bulunamadı</div>';
+                            resultsDiv.style.display = 'block';
+                        }
+                    });
+            });
+            
+            // Hide results when clicking outside
+            document.addEventListener('click', function(e) {
+                if (e.target !== input && !e.target.closest('.search-results')) {
+                    const resultsDiv = document.getElementById('results_' + input.dataset.target.split('_')[1]);
+                    if (resultsDiv) resultsDiv.style.display = 'none';
+                }
+            });
+        });
+    });
+</script>
+{% endblock %}

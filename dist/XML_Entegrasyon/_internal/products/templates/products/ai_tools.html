@@ -1,0 +1,551 @@
+{% extends 'products/base.html' %}
+
+{% block header %}AI Araçları (Gemini){% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2 mb-0">AI Araçları (Gemini)</h1>
+    <div class="btn-toolbar mb-2 mb-md-0">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#settingsModal">
+            <i class="bi bi-gear"></i> Ayarlar
+        </button>
+    </div>
+</div>
+
+<div class="alert alert-info" role="alert">
+    Başlıklar 70-80 karakter, açıklamalar 300-500 kelime arasında olacak şekilde üretilir ve süreç gerçek zamanlı takip edilir.
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label">Tedarikçi</label>
+                <select name="supplier_id" class="form-select" onchange="this.form.submit()">
+                    <option value="">Tümü</option>
+                    {% for supplier in suppliers %}
+                        <option value="{{ supplier.id }}" {% if supplier.id|stringformat:"s" == supplier_id %}selected{% endif %}>{{ supplier.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Ürün Ara</label>
+                <input type="text" name="q" class="form-control" placeholder="Ürün adı, SKU veya Barkod" value="{{ request.GET.q }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Kategori</label>
+                <select name="category" class="form-select">
+                    <option value="">Tümü</option>
+                    {% for cat in categories %}
+                        <option value="{{ cat }}" {% if cat == category_filter %}selected{% endif %}>{{ cat }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Marka</label>
+                <select name="brand" class="form-select">
+                    <option value="">Tümü</option>
+                    {% for brand in brands %}
+                        <option value="{{ brand }}" {% if brand == brand_filter %}selected{% endif %}>{{ brand }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">İçerik Durumu</label>
+                <select name="ai_status" class="form-select">
+                    <option value="">Tümü</option>
+                    {% for value, label in ai_status_choices %}
+                        <option value="{{ value }}" {% if value == ai_status_filter %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-1">
+                <label class="form-label">Adet</label>
+                <select name="per_page" class="form-select">
+                    <option value="10" {% if per_page == 10 %}selected{% endif %}>10</option>
+                    <option value="20" {% if per_page == 20 %}selected{% endif %}>20</option>
+                    <option value="50" {% if per_page == 50 %}selected{% endif %}>50</option>
+                    <option value="100" {% if per_page == 100 %}selected{% endif %}>100</option>
+                    <option value="200" {% if per_page == 200 %}selected{% endif %}>200</option>
+                </select>
+            </div>
+            <div class="col-md-2 d-grid">
+                <button type="submit" class="btn btn-primary">Filtrele</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<form method="post" action="{% url 'ai_generate' %}" id="aiForm"
+      data-generate-url="{% url 'ai_generate_single' 0 %}"
+      data-revert-url="{% url 'ai_revert_original' 0 %}">
+    {% csrf_token %}
+    <div class="mb-3 d-flex flex-wrap gap-2">
+        <button type="submit" class="btn btn-success" {% if not settings or not settings.api_key %}disabled{% endif %}>
+            <i class="bi bi-magic"></i> Seçili Ürünleri AI ile Yeniden Yaz
+        </button>
+        {% if not settings or not settings.api_key %}
+            <span class="text-danger small align-self-center">AI anahtarı tanımlı değil. Önce ayarlarınızı kaydedin.</span>
+        {% endif %}
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-hover align-middle" id="aiProductsTable">
+            <thead class="table-light">
+                <tr>
+                    <th scope="col"><input type="checkbox" id="selectAll"></th>
+                    <th scope="col">Resim</th>
+                    <th scope="col">Ürün Bilgileri</th>
+                    <th scope="col">Ürün Adı</th>
+                    <th scope="col">Açıklama (Özet)</th>
+                    <th scope="col">Durum</th>
+                    <th scope="col">İşlemler</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for group in grouped_products %}
+                    {% if group.items %}
+                        <tr class="table-group-divider">
+                            <td colspan="7" class="fw-semibold text-uppercase small text-muted">
+                                <span class="badge bg-{{ group.badge }} me-2"></span>
+                                {{ group.label }} ({{ group.items|length }})
+                            </td>
+                        </tr>
+                        {% for product in group.items %}
+                            <tr class="ai-row" data-product-id="{{ product.id }}" data-ai-status="{{ group.status }}">
+                                <td>
+                                    <input type="checkbox" name="selected_products" value="{{ product.id }}" class="product-select">
+                                </td>
+                                <td>
+                                    {% with image=product.images.first %}
+                                        {% if image %}
+                                            <img src="{{ image.image_url }}" alt="" class="rounded" style="height: 54px; width: 54px; object-fit: cover;">
+                                        {% else %}
+                                            <span class="text-muted"><i class="bi bi-image"></i></span>
+                                        {% endif %}
+                                    {% endwith %}
+                                </td>
+                                <td>
+                                    <div class="small"><strong>SKU:</strong> {{ product.sku }}</div>
+                                    {% if product.original_barcode or product.barcode %}
+                                        <div class="small text-muted"><strong>Barkod:</strong> {{ product.original_barcode|default:product.barcode }}</div>
+                                    {% endif %}
+                                    {% if product.brand %}
+                                        <div class="small text-muted"><strong>Marka:</strong> {{ product.brand }}</div>
+                                    {% endif %}
+                                    {% if product.category_path %}
+                                        <div class="small text-muted" title="{{ product.category_path }}">
+                                            <strong>Kat:</strong> {{ product.category_path|truncatechars:20 }}
+                                        </div>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="fw-semibold ai-name-text">{{ product.name }}</div>
+                                    {% if product.original_name and product.name != product.original_name %}
+                                        <small class="text-muted">Orijinal: {{ product.original_name }}</small>
+                                    {% endif %}
+                                </td>
+                                <td class="ai-desc-snippet">{{ product.description|striptags|truncatechars:120 }}</td>
+                                <td>
+                                    <span class="badge bg-{{ group.badge }} ai-status-badge">{{ group.label }}</span>
+                                    {% if product.ai_last_error %}
+                                        <small class="text-danger d-block ai-error-text">{{ product.ai_last_error|truncatechars:60 }}</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="btn-group btn-group-sm" role="group">
+                                        <button type="button" class="btn btn-outline-info detail-btn"
+                                            data-product-id="{{ product.id }}"
+                                            data-sku="{{ product.sku }}"
+                                            data-original-name="{{ product.original_name|default_if_none:product.name }}"
+                                            data-original-description="{{ product.original_description|default_if_none:product.description }}"
+                                            data-current-name="{{ product.name }}"
+                                            data-current-description="{{ product.description }}"
+                                            data-ai-name="{{ product.ai_generated_name|default_if_none:product.name }}"
+                                            data-ai-description="{{ product.ai_generated_description|default_if_none:product.description }}">
+                                            Detay
+                                        </button>
+                                        <button type="button" class="btn btn-outline-warning revert-btn"
+                                            data-product-id="{{ product.id }}" {% if not product.original_name and not product.original_description %}disabled{% endif %}>
+                                            XML'e Dön
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    {% endif %}
+                {% endfor %}
+                {% if not products.object_list %}
+                    <tr>
+                        <td colspan="7" class="text-center py-4 text-muted">Ürün bulunamadı.</td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</form>
+
+<nav aria-label="Page navigation" class="mt-3">
+    <ul class="pagination justify-content-center">
+        {% if products.has_previous %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ products.previous_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if ai_status_filter %}&ai_status={{ ai_status_filter }}{% endif %}{% if category_filter %}&category={{ category_filter }}{% endif %}{% if brand_filter %}&brand={{ brand_filter }}{% endif %}{% if supplier_id %}&supplier_id={{ supplier_id }}{% endif %}&per_page={{ per_page }}">Önceki</a>
+            </li>
+        {% endif %}
+        <li class="page-item disabled">
+            <span class="page-link">Sayfa {{ products.number }} / {{ products.paginator.num_pages }}</span>
+        </li>
+        {% if products.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="?page={{ products.next_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if ai_status_filter %}&ai_status={{ ai_status_filter }}{% endif %}{% if category_filter %}&category={{ category_filter }}{% endif %}{% if brand_filter %}&brand={{ brand_filter }}{% endif %}{% if supplier_id %}&supplier_id={{ supplier_id }}{% endif %}&per_page={{ per_page }}">Sonraki</a>
+            </li>
+        {% endif %}
+    </ul>
+</nav>
+
+<!-- Processing Modal -->
+<div class="modal fade" id="processingModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">AI İşlemi Devam Ediyor</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close" id="processingCloseBtn" disabled></button>
+            </div>
+            <div class="modal-body">
+                <div class="progress mb-3" style="height: 25px;">
+                    <div id="aiProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%">0%</div>
+                </div>
+                <div class="d-flex justify-content-between mb-2">
+                    <span id="processingStatusText">Hazırlanıyor...</span>
+                    <span id="processingCountText">0/0</span>
+                </div>
+                <div class="border rounded p-2 bg-light" style="height: 300px; overflow-y: auto; font-size: 0.85rem;" id="processingLog">
+                    <!-- Logs go here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="processingFooterCloseBtn" disabled>Kapat</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal fade" id="settingsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="save_settings" value="1">
+                <div class="modal-header">
+                    <h5 class="modal-title">Gemini AI Ayarları</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="api_keys_list" class="form-label">Google Gemini API Anahtarları</label>
+                        <textarea class="form-control" id="api_keys_list" name="api_keys_list" rows="5" placeholder="Her satıra bir API anahtarı gelecek şekilde yapıştırın." required>{{ existing_keys }}</textarea>
+                        <div class="form-text">
+                            Google AI Studio'dan aldığınız API anahtarlarını buraya girin.<br>
+                            <strong>Çoklu Anahtar:</strong> Hız sınırına takılmamak için birden fazla anahtar girebilirsiniz. Sistem bu anahtarları sırayla kullanarak paralel işlem yapacaktır.
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
+                    <button type="submit" class="btn btn-primary">Kaydet</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Detail Modal -->
+<div class="modal fade" id="productDetailModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title">İçerik Karşılaştırması</h5>
+                    <small class="text-muted">SKU: <span id="detailSku">-</span></small>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <h6>Orijinal XML</h6>
+                        <p class="text-muted small" id="originalTitleText"></p>
+                        <div class="border rounded p-3 bg-body-tertiary" id="originalDescriptionBox"></div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>AI İçeriği</h6>
+                        <p class="text-muted small" id="aiTitleText"></p>
+                        <div class="border rounded p-3 bg-body-tertiary" id="aiDescriptionBox"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Kapat</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    const aiForm = document.getElementById('aiForm');
+    const selectAll = document.getElementById('selectAll');
+    if (!aiForm) {
+        return;
+    }
+
+    const csrfToken = aiForm.querySelector('input[name="csrfmiddlewaretoken"]').value;
+    const generateTemplate = aiForm.dataset.generateUrl;
+    const revertTemplate = aiForm.dataset.revertUrl;
+
+    // Processing modal references
+    const processingModalElement = document.getElementById('processingModal');
+    const processingModal = processingModalElement ? new bootstrap.Modal(processingModalElement) : null;
+    const aiProgressBar = document.getElementById('aiProgressBar');
+    const processingStatusText = document.getElementById('processingStatusText');
+    const processingCountText = document.getElementById('processingCountText');
+    const processingLog = document.getElementById('processingLog');
+    const processingCloseBtn = document.getElementById('processingCloseBtn');
+    const processingFooterCloseBtn = document.getElementById('processingFooterCloseBtn');
+
+    // Detail modal references
+    const detailModalElement = document.getElementById('productDetailModal');
+    const detailModal = detailModalElement ? new bootstrap.Modal(detailModalElement) : null;
+    const detailSku = document.getElementById('detailSku');
+    const originalTitleText = document.getElementById('originalTitleText');
+    const originalDescriptionBox = document.getElementById('originalDescriptionBox');
+    const aiTitleText = document.getElementById('aiTitleText');
+    const aiDescriptionBox = document.getElementById('aiDescriptionBox');
+
+    function buildEndpoint(template, id) {
+        return template.replace(/0\/?$/, '') + id + '/';
+    }
+
+    function toggleSelectAll(state) {
+        document.querySelectorAll('.product-select').forEach(cb => {
+            cb.checked = state;
+        });
+    }
+
+    if (selectAll) {
+        selectAll.addEventListener('change', (event) => {
+            toggleSelectAll(event.target.checked);
+        });
+    }
+
+    function logToModal(type, message) {
+        if (!processingLog) {
+            return;
+        }
+        const div = document.createElement('div');
+        const variant = type === 'error' ? 'text-danger' : (type === 'success' ? 'text-success' : 'text-muted');
+        div.className = `mb-1 ${variant}`;
+        div.innerHTML = `<small>[${new Date().toLocaleTimeString()}]</small> ${message}`;
+        processingLog.prepend(div);
+    }
+
+    function updateProgress(current, total) {
+        if (!aiProgressBar || !processingCountText) {
+            return;
+        }
+        const percent = total ? Math.round((current / total) * 100) : 0;
+        aiProgressBar.style.width = `${percent}%`;
+        aiProgressBar.textContent = `${percent}%`;
+        processingCountText.textContent = `${current}/${total}`;
+    }
+
+    function resetModal() {
+        if (!processingModal) {
+            return;
+        }
+        updateProgress(0, 0);
+        if (processingStatusText) {
+            processingStatusText.textContent = 'Hazırlanıyor...';
+        }
+        if (processingLog) {
+            processingLog.innerHTML = '';
+        }
+        if (processingCloseBtn) {
+            processingCloseBtn.disabled = true;
+        }
+        if (processingFooterCloseBtn) {
+            processingFooterCloseBtn.disabled = true;
+        }
+        if (aiProgressBar) {
+            aiProgressBar.classList.add('progress-bar-animated');
+        }
+    }
+
+    function finishModal() {
+        if (!processingModal) {
+            return;
+        }
+        if (aiProgressBar) {
+            aiProgressBar.classList.remove('progress-bar-animated');
+        }
+        if (processingStatusText) {
+            processingStatusText.textContent = 'İşlem Tamamlandı.';
+        }
+        if (processingCloseBtn) {
+            processingCloseBtn.disabled = false;
+        }
+        if (processingFooterCloseBtn) {
+            processingFooterCloseBtn.disabled = false;
+        }
+    }
+
+    function setRowStatus(row, status, label) {
+        const badge = row.querySelector('.ai-status-badge');
+        row.dataset.aiStatus = status;
+        row.classList.remove('table-success', 'table-warning', 'table-danger');
+        if (status === 'generated') {
+            row.classList.add('table-success');
+            badge.className = 'badge bg-success ai-status-badge';
+        } else if (status === 'processing') {
+            row.classList.add('table-warning');
+            badge.className = 'badge bg-warning text-dark ai-status-badge';
+        } else if (status === 'error') {
+            row.classList.add('table-danger');
+            badge.className = 'badge bg-danger ai-status-badge';
+        } else {
+            badge.className = 'badge bg-secondary ai-status-badge';
+        }
+        badge.textContent = label;
+    }
+
+    function updateDetailDatasets(row, data) {
+        const detailBtn = row.querySelector('.detail-btn');
+        if (!detailBtn || !data) {
+            return;
+        }
+        if (data.name) {
+            detailBtn.dataset.currentName = data.name;
+        }
+        if (data.description) {
+            detailBtn.dataset.currentDescription = data.description;
+        }
+        if (data.ai_generated_name) {
+            detailBtn.dataset.aiName = data.ai_generated_name;
+        }
+        if (data.ai_generated_description) {
+            detailBtn.dataset.aiDescription = data.ai_generated_description;
+        }
+        if (data.original_name) {
+            detailBtn.dataset.originalName = data.original_name;
+        }
+        if (data.original_description) {
+            detailBtn.dataset.originalDescription = data.original_description;
+        }
+    }
+
+    function updateRowWithResult(productId, data) {
+        const row = document.querySelector(`tr[data-product-id="${productId}"]`);
+        if (!row) {
+            return;
+        }
+        row.querySelector('.ai-name-text').textContent = data.name;
+        row.querySelector('.ai-desc-snippet').textContent = data.description_snippet ?? '';
+        row.querySelectorAll('.revert-btn').forEach(btn => btn.disabled = false);
+        setRowStatus(row, data.ai_status, data.status_label);
+        const errorBlock = row.querySelector('.ai-error-text');
+        if (errorBlock) {
+            errorBlock.textContent = '';
+        }
+        updateDetailDatasets(row, data);
+    }
+
+    function markRowAsError(productId, message) {
+        const row = document.querySelector(`tr[data-product-id="${productId}"]`);
+        if (!row) {
+            return;
+        }
+        setRowStatus(row, 'error', 'Hata');
+        let errorBlock = row.querySelector('.ai-error-text');
+        if (!errorBlock) {
+            errorBlock = document.createElement('small');
+            errorBlock.className = 'ai-error-text text-danger d-block';
+            row.querySelector('td:nth-child(6)').appendChild(errorBlock);
+        }
+        errorBlock.textContent = message;
+    }
+
+    aiForm.addEventListener('submit', (event) => {
+        const selected = document.querySelectorAll('.product-select:checked');
+        if (!selected.length) {
+            event.preventDefault();
+            alert('Lütfen en az bir ürün seçin.');
+            return;
+        }
+
+        // Show processing modal in "Server Mode"
+        if (processingModal) {
+            resetModal();
+            if (processingStatusText) {
+                processingStatusText.textContent = 'Sunucuda paralel işlem yapılıyor, lütfen bekleyin...';
+            }
+            if (processingCountText) {
+                processingCountText.textContent = `${selected.length} ürün`;
+            }
+            if (aiProgressBar) {
+                aiProgressBar.style.width = '100%';
+                aiProgressBar.textContent = 'İşleniyor...';
+            }
+            logToModal('info', 'İstek sunucuya gönderildi. İşlem tamamlandığında sayfa yenilenecektir.');
+            processingModal.show();
+        }
+        
+        // Allow the form to submit normally to the backend
+    });
+
+    document.addEventListener('click', async (event) => {
+        const detailBtn = event.target.closest('.detail-btn');
+        if (detailBtn && detailModal) {
+            detailSku.textContent = detailBtn.dataset.sku;
+            originalTitleText.textContent = detailBtn.dataset.originalName || '-';
+            originalDescriptionBox.innerHTML = detailBtn.dataset.originalDescription || '<em>Veri bulunamadı</em>';
+            aiTitleText.textContent = detailBtn.dataset.aiName || detailBtn.dataset.currentName || '-';
+            aiDescriptionBox.innerHTML = detailBtn.dataset.aiDescription || detailBtn.dataset.currentDescription || '<em>Veri bulunamadı</em>';
+            detailModal.show();
+            return;
+        }
+
+        const revertBtn = event.target.closest('.revert-btn');
+        if (revertBtn) {
+            const productId = revertBtn.dataset.productId;
+            const originalText = revertBtn.textContent;
+            revertBtn.disabled = true;
+            revertBtn.textContent = 'Dönülüyor...';
+            try {
+                const response = await fetch(buildEndpoint(revertTemplate, productId), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken,
+                    },
+                    body: JSON.stringify({}),
+                });
+                const data = await response.json();
+                if (!response.ok || data.success === false) {
+                    throw new Error(data.error || 'Bilinmeyen hata');
+                }
+                updateRowWithResult(productId, data);
+            } catch (error) {
+                alert(`Hata: ${error.message}`);
+            } finally {
+                revertBtn.disabled = false;
+                revertBtn.textContent = originalText;
+            }
+        }
+    });
+})();
+</script>
+{% endblock %}

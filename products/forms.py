@@ -10,8 +10,9 @@ class SupplierSettingsForm(forms.ModelForm):
             'include_trendyol_commission', 'default_commission_rate',
             'service_fee', 'withholding_tax_rate',
             'buying_price_includes_vat', 'buying_vat_rate', 'selling_vat_rate',
-            'auto_update_interval',
-            'stop_stock_update', 'stop_price_update'
+            'auto_update_interval', 'batch_check_interval',
+            'stop_stock_update', 'stop_price_update', 'zero_stock_on_error',
+            'use_frame', 'frame_image'
         ]
         widgets = {
             'profit_margin': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01'}),
@@ -28,8 +29,12 @@ class SupplierSettingsForm(forms.ModelForm):
             'buying_vat_rate': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01'}),
             'selling_vat_rate': forms.NumberInput(attrs={'class': 'form-control', 'step': '0.01'}),
             'auto_update_interval': forms.NumberInput(attrs={'class': 'form-control', 'min': '0'}),
+            'batch_check_interval': forms.NumberInput(attrs={'class': 'form-control', 'min': '0'}),
             'stop_stock_update': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
             'stop_price_update': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'zero_stock_on_error': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'use_frame': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+            'frame_image': forms.FileInput(attrs={'class': 'form-control'}),
         }
         labels = {
             'profit_margin': 'Varsayılan Kar Marjı (%)',

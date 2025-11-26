@@ -13,6 +13,8 @@ import difflib
 from django.http import JsonResponse
 import math
 import re
+import base64
+from .utils import apply_frame_to_image
 
 def parse_measurement(value_str):
     """
@@ -79,8 +81,16 @@ def product_list(request):
     category_filter = request.GET.get('category', '')
     brand_filter = request.GET.get('brand', '')
     supplier_filter = request.GET.get('supplier', '')
+    sort_by = request.GET.get('sort_by', '')
     
-    products = Product.objects.all().order_by('-created_at')
+    products = Product.objects.all()
+    
+    if sort_by == 'newest_xml':
+        products = products.order_by('-created_at')
+    elif sort_by == 'oldest_xml':
+        products = products.order_by('created_at')
+    else:
+        products = products.order_by('-created_at')
     
     if query:
         products = products.filter(
@@ -121,7 +131,8 @@ def product_list(request):
         'selected_brand': brand_filter,
         'selected_supplier': int(supplier_filter) if supplier_filter else None,
         'selected_status': status,
-        'search_query': query
+        'search_query': query,
+        'sort_by': sort_by
     }
 
     return render(request, 'products/product_list.html', context)
@@ -203,15 +214,18 @@ def search_trendyol_categories(request):
         # Tüm ağacı çek (Cache mekanizması eklenebilir)
         tree = service.get_category_tree()
         
-        # Ağacı düzleştir ve ara
+        # Ağacı düzleştir ve ara (Sadece uç kategoriler)
         results = []
         
         def traverse(categories):
             for cat in categories:
-                if query in cat['name'].lower():
-                    results.append({'id': cat['id'], 'name': cat['name']})
+                # Alt kategorisi varsa (parent ise) içine gir, kendisini ekleme
                 if cat.get('subCategories'):
                     traverse(cat['subCategories'])
+                else:
+                    # Alt kategorisi yoksa (uç kategori ise) ve arama terimi isminde geçiyorsa ekle
+                    if query in cat['name'].lower():
+                        results.append({'id': cat['id'], 'name': cat['name']})
         
         if 'categories' in tree:
              traverse(tree['categories'])
@@ -349,9 +363,6 @@ def match_categories(request):
             # But `.` or special chars might be tricky.
             # Let's rely on the fact that we are iterating the same `page_items`.
             
-            # Wait, the POST request might not have the same pagination context if not passed carefully?
-            # No, the form is submitted to the same URL with GET params, so `page_obj` is same.
-            
             trendyol_id = request.POST.get(f'cat_id_{cat}') # I will change template to use this key
             trendyol_name = request.POST.get(f'cat_name_{cat}')
             
@@ -423,6 +434,10 @@ def match_brands(request):
         'selected_supplier_id': int(selected_supplier_id) if selected_supplier_id else None
     })
 
+import os
+from django.conf import settings as django_settings
+from django.core.files import File
+
 @login_required
 def supplier_settings(request):
     suppliers = Supplier.objects.all()
@@ -435,6 +450,17 @@ def supplier_settings(request):
     form = None
     price_rules = None
     preview_products = []
+    frame_templates = []
+    
+    # Load Frame Templates
+    templates_dir = os.path.join(django_settings.MEDIA_ROOT, 'frame_templates')
+    if os.path.exists(templates_dir):
+        for f in os.listdir(templates_dir):
+            if f.endswith('.png'):
+                frame_templates.append({
+                    'name': f,
+                    'url': f"{django_settings.MEDIA_URL}frame_templates/{f}"
+                })
     
     if selected_supplier_id:
         selected_supplier = Supplier.objects.get(id=selected_supplier_id)
@@ -443,12 +469,26 @@ def supplier_settings(request):
         
         if request.method == 'POST':
             if 'save_settings' in request.POST:
-                form = SupplierSettingsForm(request.POST, instance=settings)
+                form = SupplierSettingsForm(request.POST, request.FILES, instance=settings)
                 if form.is_valid():
                     form.save()
                     messages.success(request, "Ayarlar başarıyla kaydedildi.")
                     return redirect(f"{reverse('supplier_settings')}?supplier_id={selected_supplier_id}")
             
+            elif 'select_template' in request.POST:
+                template_name = request.POST.get('template_name')
+                template_path = os.path.join(templates_dir, template_name)
+                
+                if os.path.exists(template_path):
+                    with open(template_path, 'rb') as f:
+                        settings.frame_image.save(template_name, File(f), save=True)
+                    settings.use_frame = True
+                    settings.save()
+                    messages.success(request, f"'{template_name}' çerçevesi seçildi.")
+                else:
+                    messages.error(request, "Şablon bulunamadı.")
+                return redirect(f"{reverse('supplier_settings')}?supplier_id={selected_supplier_id}")
+
             elif 'save_rule' in request.POST:
                 rule_id = request.POST.get('edit_rule_id')
                 if rule_id:
@@ -524,7 +564,8 @@ def supplier_settings(request):
         'form': form,
         'price_rules': price_rules,
         'rule_form': PriceRuleForm(),
-        'preview_products': preview_products
+        'preview_products': preview_products,
+        'frame_templates': frame_templates
     })
 
 @login_required
@@ -536,6 +577,9 @@ def publish_wizard(request):
     category_filter = request.GET.get('category')
     brand_filter = request.GET.get('brand')
     search_query = request.GET.get('q')
+    match_status = request.GET.get('match_status')
+    ai_status = request.GET.get('ai_status')
+    attr_status = request.GET.get('attr_status')
     
     # Varsayılan olarak ilk tedarikçiyi seç
     if not supplier_id and suppliers.exists():
@@ -558,6 +602,27 @@ def publish_wizard(request):
             Q(sku__icontains=search_query) |
             Q(barcode__icontains=search_query)
         )
+
+    if match_status:
+        mapped_cats = CategoryMapping.objects.values_list('xml_category_name', flat=True)
+        if match_status == 'matched':
+            products = products.filter(category_path__in=mapped_cats)
+        elif match_status == 'unmatched':
+            products = products.exclude(category_path__in=mapped_cats)
+
+    if ai_status:
+        if ai_status == 'generated':
+            products = products.filter(ai_status='generated')
+        elif ai_status == 'not_generated':
+            products = products.exclude(ai_status='generated')
+
+    if attr_status:
+        # Özellik eşleştirmesi yapılmış kategori yollarını bul
+        cats_with_attrs = CategoryAttributeMapping.objects.values_list('category_mapping__xml_category_name', flat=True).distinct()
+        if attr_status == 'mapped':
+            products = products.filter(category_path__in=cats_with_attrs)
+        elif attr_status == 'unmapped':
+            products = products.exclude(category_path__in=cats_with_attrs)
 
     # Filtreleme seçenekleri için listeler (Sadece mevcut tedarikçinin ürünlerinden)
     filter_base_products = Product.objects.filter(supplier_id=supplier_id) if supplier_id else Product.objects.all()
@@ -833,7 +898,17 @@ def publish_wizard(request):
                         attributes.append({"attributeId": req_id, "attributeValueId": found_val})
 
             # Resimler
-            image_urls = [img.image_url for img in p.images.all()]
+            image_urls = []
+            for img in p.images.all():
+                if img.processed_image:
+                    try:
+                        # Processed image varsa tam URL oluştur (Trendyol'un erişebilmesi için public domain olmalı)
+                        image_urls.append(request.build_absolute_uri(img.processed_image.url))
+                    except:
+                        image_urls.append(img.image_url)
+                else:
+                    image_urls.append(img.image_url)
+
             if not image_urls:
                 continue
 
@@ -896,7 +971,10 @@ def publish_wizard(request):
         'brands': brands,
         'selected_category': category_filter,
         'selected_brand': brand_filter,
-        'search_query': search_query
+        'search_query': search_query,
+        'match_status': match_status,
+        'ai_status': ai_status,
+        'attr_status': attr_status
     })
 
 @login_required
@@ -925,8 +1003,11 @@ def auto_match_categories(request):
             trendyol_cats_flat = []
             def flatten_cats(cats):
                 for c in cats:
-                    trendyol_cats_flat.append({'id': c['id'], 'name': c['name']})
-                    if c.get('subCategories'):
+                    # Sadece uç kategorileri (alt kategorisi olmayanları) listeye ekle
+                    if not c.get('subCategories'):
+                        trendyol_cats_flat.append({'id': c['id'], 'name': c['name']})
+                    else:
+                        # Alt kategorisi varsa derinlemesine git
                         flatten_cats(c['subCategories'])
             
             if 'categories' in tree:
@@ -1059,10 +1140,10 @@ def map_attributes(request, mapping_id):
     })
 
 @login_required
-def delete_products_from_trendyol(request):
+def manage_trendyol_products(request):
     if request.method == 'POST':
         selected_ids = request.POST.getlist('selected_products')
-        action_type = request.POST.get('action_type', 'delete_api') # 'delete_api' or 'reset_local'
+        action_type = request.POST.get('action_type') # delete_api, archive_api, unarchive_api, reset_local
 
         if not selected_ids:
             messages.warning(request, "Lütfen en az bir ürün seçin.")
@@ -1071,36 +1152,63 @@ def delete_products_from_trendyol(request):
         products = Product.objects.filter(id__in=selected_ids)
         barcodes = [p.barcode for p in products if p.barcode]
 
-        if action_type == 'delete_api':
-            try:
-                service = TrendyolService(user=request.user)
+        if not barcodes and action_type != 'reset_local':
+             messages.warning(request, "Seçilen ürünlerin barkodu bulunamadı.")
+             return redirect('product_list')
+
+        service = TrendyolService(user=request.user)
+
+        try:
+            if action_type == 'delete_api':
                 result = service.delete_products(barcodes)
-                
                 if "batchRequestId" in result:
                     batch_id = result['batchRequestId']
                     messages.success(request, f"{len(barcodes)} ürün için silme talebi gönderildi. Batch ID: {batch_id}")
-                    
-                    # Save Batch Request
-                    TrendyolBatchRequest.objects.create(
-                        batch_request_id=batch_id,
-                        batch_type='ProductDeletion',
-                        item_count=len(barcodes)
-                    )
-                    
-                    # Update local status immediately
+                    TrendyolBatchRequest.objects.create(batch_request_id=batch_id, batch_type='ProductDeletion', item_count=len(barcodes))
                     products.update(is_published_to_trendyol=False)
-                    
                 elif result.get("status") == "error":
                     messages.error(request, f"Hata: {result.get('message')} - {result.get('details')}")
-                else:
-                    messages.warning(request, f"Bilinmeyen yanıt: {result}")
 
-            except Exception as e:
-                messages.error(request, f"İşlem başlatılamadı: {str(e)}")
-        
-        elif action_type == 'reset_local':
-            products.update(is_published_to_trendyol=False)
-            messages.success(request, f"{len(products)} ürünün durumu 'Yayında Değil' olarak güncellendi.")
+            elif action_type == 'archive_api':
+                items = [{"barcode": b, "archived": True} for b in barcodes]
+                results = service.archive_products(items)
+                success_count = 0
+                for res in results:
+                    if "batchRequestId" in res:
+                        batch_id = res['batchRequestId']
+                        TrendyolBatchRequest.objects.create(batch_request_id=batch_id, batch_type='ProductArchiveUpdate', item_count=len(items))
+                        success_count += 1
+                    elif res.get("status") == "error":
+                        messages.error(request, f"Hata: {res.get('message')} - {res.get('details')}")
+                
+                if success_count > 0:
+                    messages.success(request, f"{len(barcodes)} ürün için arşivleme talebi gönderildi.")
+                    # Arşivlenen ürünler yayında değil olarak işaretlenebilir veya yeni bir statü eklenebilir
+                    # Şimdilik yayında değil yapalım
+                    products.update(is_published_to_trendyol=False)
+
+            elif action_type == 'unarchive_api':
+                items = [{"barcode": b, "archived": False} for b in barcodes]
+                results = service.archive_products(items)
+                success_count = 0
+                for res in results:
+                    if "batchRequestId" in res:
+                        batch_id = res['batchRequestId']
+                        TrendyolBatchRequest.objects.create(batch_request_id=batch_id, batch_type='ProductArchiveUpdate', item_count=len(items))
+                        success_count += 1
+                    elif res.get("status") == "error":
+                        messages.error(request, f"Hata: {res.get('message')} - {res.get('details')}")
+                
+                if success_count > 0:
+                    messages.success(request, f"{len(barcodes)} ürün için arşivden çıkarma talebi gönderildi.")
+                    products.update(is_published_to_trendyol=True)
+
+            elif action_type == 'reset_local':
+                products.update(is_published_to_trendyol=False)
+                messages.success(request, f"{len(products)} ürünün durumu 'Yayında Değil' olarak güncellendi.")
+
+        except Exception as e:
+            messages.error(request, f"İşlem başlatılamadı: {str(e)}")
 
     return redirect('product_list')
 
@@ -1268,4 +1376,79 @@ def get_background_processes(request):
             'completed_at': p.completed_at.strftime('%H:%M:%S') if p.completed_at else '-'
         })
     return JsonResponse({'processes': data})
+
+@login_required
+def test_frame_creation(request):
+    supplier_id = request.GET.get('supplier_id')
+    if not supplier_id:
+        return JsonResponse({'error': 'Tedarikçi ID gerekli'}, status=400)
+        
+    try:
+        settings = SupplierSettings.objects.get(supplier_id=supplier_id)
+        if not settings.frame_image:
+            return JsonResponse({'error': 'Çerçeve görseli yüklenmemiş.'}, status=400)
+            
+        # Get 3 random products with images
+        products = Product.objects.filter(supplier_id=supplier_id).exclude(images=None).order_by('?')[:3]
+        
+        results = []
+        for p in products:
+            img_obj = p.images.first()
+            if not img_obj: 
+                continue
+                
+            original_url = img_obj.image_url
+            
+            # Process
+            processed_file = apply_frame_to_image(original_url, settings.frame_image.path)
+            
+            if processed_file:
+                # Convert to base64
+                encoded_string = base64.b64encode(processed_file.read()).decode('utf-8')
+                results.append({
+                    'name': p.name,
+                    'original_url': original_url,
+                    'processed_b64': f"data:image/jpeg;base64,{encoded_string}"
+                })
+        
+        return JsonResponse({'results': results})
+        
+    except SupplierSettings.DoesNotExist:
+        return JsonResponse({'error': 'Ayarlar bulunamadı.'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+@login_required
+def sync_selected_products(request):
+    if request.method == 'POST':
+        selected_ids = request.POST.getlist('selected_products')
+        if not selected_ids:
+            messages.warning(request, "Lütfen en az bir ürün seçin.")
+            return redirect('product_list')
+
+        # Convert list to comma separated string
+        ids_str = ",".join(selected_ids)
+        
+        try:
+            # Run command in background
+            subprocess.Popen([sys.executable, 'manage.py', 'auto_sync_stocks', '--product_ids', ids_str, '--process_type', 'manual_xml_sync'])
+            messages.success(request, f"{len(selected_ids)} ürün için XML senkronizasyonu başlatıldı. İşlem Kayıtları sayfasından takip edebilirsiniz.")
+        except Exception as e:
+            messages.error(request, f"İşlem başlatılamadı: {str(e)}")
+
+    return redirect('product_list')
+
+@login_required
+def sync_all_products(request):
+    if request.method == 'POST':
+        try:
+            # Run command in background with --force to ignore intervals
+            # Added --published_only to sync only products published to Trendyol
+            # Added --verify_trendyol to verify prices after sync
+            subprocess.Popen([sys.executable, 'manage.py', 'auto_sync_stocks', '--force', '--published_only', '--process_type', 'manual_xml_sync', '--verify_trendyol'])
+            messages.success(request, "Trendyol'da yayında olan tüm ürünler için XML senkronizasyonu ve Fiyat Doğrulaması başlatıldı. İşlem Kayıtları sayfasından takip edebilirsiniz.")
+        except Exception as e:
+            messages.error(request, f"İşlem başlatılamadı: {str(e)}")
+            
+    return redirect('product_list')
 

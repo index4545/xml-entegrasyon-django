@@ -138,6 +138,17 @@ class SupplierSettings(models.Model):
     auto_update_interval = models.IntegerField(default=0, verbose_name="Otomatik Güncelleme Aralığı (Dakika)")
     last_auto_update = models.DateTimeField(null=True, blank=True, verbose_name="Son Otomatik Güncelleme")
     
+    # Batch Kontrol Ayarı
+    batch_check_interval = models.IntegerField(default=15, verbose_name="Batch Kontrol Aralığı (Dakika)")
+    last_batch_check = models.DateTimeField(null=True, blank=True, verbose_name="Son Batch Kontrolü")
+
+    # Hata Yönetimi
+    zero_stock_on_error = models.BooleanField(default=True, verbose_name="Hata Durumunda Stoğu Sıfırla")
+
+    # Çerçeve Ayarları
+    use_frame = models.BooleanField(default=False, verbose_name="Ürün Görsellerine Çerçeve Ekle")
+    frame_image = models.ImageField(upload_to='frames/', null=True, blank=True, verbose_name="Çerçeve Görseli (PNG)")
+
     def __str__(self):
         return f"Ayarlar: {self.supplier.name}"
     
@@ -170,6 +181,7 @@ class PriceRule(models.Model):
 class ProductImage(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='images')
     image_url = models.URLField(max_length=1000)
+    processed_image = models.ImageField(upload_to='processed_images/', null=True, blank=True, verbose_name="İşlenmiş Görsel")
     is_primary = models.BooleanField(default=False)
 
     def __str__(self):
@@ -221,6 +233,9 @@ class TrendyolBatchRequest(models.Model):
     last_checked_at = models.DateTimeField(null=True, blank=True, verbose_name="Son Kontrol Tarihi")
     
     result_json = models.JSONField(null=True, blank=True, verbose_name="Sonuç JSON")
+    
+    # Link to the background process that initiated this batch
+    process = models.ForeignKey('BackgroundProcess', on_delete=models.SET_NULL, null=True, blank=True, related_name='batch_requests', verbose_name="İlgili İşlem")
 
     def __str__(self):
         return f"{self.batch_type} - {self.batch_request_id}"
@@ -233,6 +248,7 @@ class TrendyolBatchRequest(models.Model):
 class BackgroundProcess(models.Model):
     PROCESS_TYPES = [
         ('xml_sync', 'XML Senkronizasyonu'),
+        ('manual_xml_sync', 'Manuel XML Senkronizasyonu'),
         ('trendyol_update', 'Trendyol Güncellemesi'),
     ]
     STATUS_CHOICES = [
@@ -251,6 +267,7 @@ class BackgroundProcess(models.Model):
     processed_items = models.IntegerField(default=0, verbose_name="İşlenen Öğe")
     
     message = models.TextField(blank=True, verbose_name="Durum Mesajı")
+    details = models.JSONField(default=dict, blank=True, verbose_name="İşlem Detayları")
     error_details = models.TextField(blank=True, null=True, verbose_name="Hata Detayları")
     
     created_at = models.DateTimeField(auto_now_add=True)

@@ -51,12 +51,28 @@
                 </select>
             </div>
             <div class="col-md-2">
+                <label class="form-label">Eşleşme Durumu</label>
+                <select name="match_status" class="form-select">
+                    <option value="">Tümü</option>
+                    <option value="matched" {% if match_status == 'matched' %}selected{% endif %}>Eşleşmiş</option>
+                    <option value="unmatched" {% if match_status == 'unmatched' %}selected{% endif %}>Eşleşmemiş</option>
+                </select>
+            </div>
+            <div class="col-md-2">
                 <label class="form-label">İçerik Durumu</label>
                 <select name="ai_status" class="form-select">
                     <option value="">Tümü</option>
                     {% for value, label in ai_status_choices %}
                         <option value="{{ value }}" {% if value == ai_status_filter %}selected{% endif %}>{{ label }}</option>
                     {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Sıralama</label>
+                <select name="sort_by" class="form-select">
+                    <option value="">Varsayılan</option>
+                    <option value="newest_xml" {% if sort_by == 'newest_xml' %}selected{% endif %}>XML'e Yeni Eklenen</option>
+                    <option value="oldest_xml" {% if sort_by == 'oldest_xml' %}selected{% endif %}>XML'e Eski Eklenen</option>
                 </select>
             </div>
             <div class="col-md-1">
@@ -84,6 +100,9 @@
         <button type="submit" class="btn btn-success" {% if not settings or not settings.api_key %}disabled{% endif %}>
             <i class="bi bi-magic"></i> Seçili Ürünleri AI ile Yeniden Yaz
         </button>
+        <button type="submit" class="btn btn-primary" id="btnMatchCategories" formaction="{% url 'ai_match_categories' %}" {% if not settings or not settings.api_key %}disabled{% endif %}>
+            <i class="bi bi-tags"></i> AI ile Kategori Eşleştir
+        </button>
         {% if not settings or not settings.api_key %}
             <span class="text-danger small align-self-center">AI anahtarı tanımlı değil. Önce ayarlarınızı kaydedin.</span>
         {% endif %}
@@ -96,6 +115,7 @@
                     <th scope="col"><input type="checkbox" id="selectAll"></th>
                     <th scope="col">Resim</th>
                     <th scope="col">Ürün Bilgileri</th>
+                    <th scope="col">Trendyol Kategori</th>
                     <th scope="col">Ürün Adı</th>
                     <th scope="col">Açıklama (Özet)</th>
                     <th scope="col">Durum</th>
@@ -106,7 +126,7 @@
                 {% for group in grouped_products %}
                     {% if group.items %}
                         <tr class="table-group-divider">
-                            <td colspan="7" class="fw-semibold text-uppercase small text-muted">
+                            <td colspan="8" class="fw-semibold text-uppercase small text-muted">
                                 <span class="badge bg-{{ group.badge }} me-2"></span>
                                 {{ group.label }} ({{ group.items|length }})
                             </td>
@@ -137,6 +157,26 @@
                                         <div class="small text-muted" title="{{ product.category_path }}">
                                             <strong>Kat:</strong> {{ product.category_path|truncatechars:20 }}
                                         </div>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if product.trendyol_category_id %}
+                                        <span class="badge bg-success" title="Trendyol ID: {{ product.trendyol_category_id }}">
+                                            <i class="bi bi-check-circle"></i> 
+                                            {{ product.trendyol_category_id }}
+                                            {% if product.trendyol_category_name_display %}
+                                                - {{ product.trendyol_category_name_display }}
+                                            {% endif %}
+                                        </span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">
+                                            <i class="bi bi-dash-circle"></i> Eşleşmedi
+                                        </span>
+                                        {% if product.ai_last_error %}
+                                            <div class="text-danger small mt-1" title="{{ product.ai_last_error }}">
+                                                <i class="bi bi-exclamation-triangle"></i> {{ product.ai_last_error|truncatechars:30 }}
+                                            </div>
+                                        {% endif %}
                                     {% endif %}
                                 </td>
                                 <td>
@@ -177,7 +217,7 @@
                 {% endfor %}
                 {% if not products.object_list %}
                     <tr>
-                        <td colspan="7" class="text-center py-4 text-muted">Ürün bulunamadı.</td>
+                        <td colspan="8" class="text-center py-4 text-muted">Ürün bulunamadı.</td>
                     </tr>
                 {% endif %}
             </tbody>
@@ -189,7 +229,7 @@
     <ul class="pagination justify-content-center">
         {% if products.has_previous %}
             <li class="page-item">
-                <a class="page-link" href="?page={{ products.previous_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if ai_status_filter %}&ai_status={{ ai_status_filter }}{% endif %}{% if category_filter %}&category={{ category_filter }}{% endif %}{% if brand_filter %}&brand={{ brand_filter }}{% endif %}{% if supplier_id %}&supplier_id={{ supplier_id }}{% endif %}&per_page={{ per_page }}">Önceki</a>
+                <a class="page-link" href="?page={{ products.previous_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if ai_status_filter %}&ai_status={{ ai_status_filter }}{% endif %}{% if category_filter %}&category={{ category_filter }}{% endif %}{% if brand_filter %}&brand={{ brand_filter }}{% endif %}{% if supplier_id %}&supplier_id={{ supplier_id }}{% endif %}{% if match_status %}&match_status={{ match_status }}{% endif %}&per_page={{ per_page }}">Önceki</a>
             </li>
         {% endif %}
         <li class="page-item disabled">
@@ -197,7 +237,7 @@
         </li>
         {% if products.has_next %}
             <li class="page-item">
-                <a class="page-link" href="?page={{ products.next_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if ai_status_filter %}&ai_status={{ ai_status_filter }}{% endif %}{% if category_filter %}&category={{ category_filter }}{% endif %}{% if brand_filter %}&brand={{ brand_filter }}{% endif %}{% if supplier_id %}&supplier_id={{ supplier_id }}{% endif %}&per_page={{ per_page }}">Sonraki</a>
+                <a class="page-link" href="?page={{ products.next_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if ai_status_filter %}&ai_status={{ ai_status_filter }}{% endif %}{% if category_filter %}&category={{ category_filter }}{% endif %}{% if brand_filter %}&brand={{ brand_filter }}{% endif %}{% if supplier_id %}&supplier_id={{ supplier_id }}{% endif %}{% if match_status %}&match_status={{ match_status }}{% endif %}&per_page={{ per_page }}">Sonraki</a>
             </li>
         {% endif %}
     </ul>
@@ -478,32 +518,127 @@
         errorBlock.textContent = message;
     }
 
-    aiForm.addEventListener('submit', (event) => {
+    aiForm.addEventListener('submit', async (event) => {
+        const submitter = event.submitter;
+        const isCategoryMatch = submitter && (submitter.id === 'btnMatchCategories' || (submitter.getAttribute('formaction') && submitter.getAttribute('formaction').includes('match-categories')));
+        
+        if (!isCategoryMatch) {
+            // Normal submit for other actions (like AI Generate Content)
+            // Or we can implement streaming for that too later.
+            // For now, let it fall through to default behavior (reload)
+            // But we still show the modal.
+            const selected = document.querySelectorAll('.product-select:checked');
+            if (!selected.length) {
+                event.preventDefault();
+                alert('Lütfen en az bir ürün seçin.');
+                return;
+            }
+            if (processingModal) {
+                resetModal();
+                processingStatusText.textContent = 'İşlem sunucuda yapılıyor...';
+                processingCountText.textContent = `${selected.length} ürün`;
+                aiProgressBar.style.width = '100%';
+                logToModal('info', 'İstek gönderildi, sayfa yenilenecek...');
+                processingModal.show();
+            }
+            return;
+        }
+
+        // Handle Category Match with Streaming
+        event.preventDefault();
         const selected = document.querySelectorAll('.product-select:checked');
         if (!selected.length) {
-            event.preventDefault();
             alert('Lütfen en az bir ürün seçin.');
             return;
         }
 
-        // Show processing modal in "Server Mode"
         if (processingModal) {
             resetModal();
-            if (processingStatusText) {
-                processingStatusText.textContent = 'Sunucuda paralel işlem yapılıyor, lütfen bekleyin...';
-            }
-            if (processingCountText) {
-                processingCountText.textContent = `${selected.length} ürün`;
-            }
-            if (aiProgressBar) {
-                aiProgressBar.style.width = '100%';
-                aiProgressBar.textContent = 'İşleniyor...';
-            }
-            logToModal('info', 'İstek sunucuya gönderildi. İşlem tamamlandığında sayfa yenilenecektir.');
+            processingStatusText.textContent = 'Kategori eşleştirme başlatılıyor...';
+            processingCountText.textContent = `0/${selected.length}`;
             processingModal.show();
         }
+
+        const formData = new FormData(aiForm);
+        // We need to manually add selected products because FormData might not capture them if we preventDefault?
+        // Actually FormData(form) captures all checked inputs.
         
-        // Allow the form to submit normally to the backend
+        // Convert to JSON for the fetch body
+        const selectedIds = Array.from(selected).map(cb => cb.value);
+        
+        try {
+            const response = await fetch(submitter.getAttribute('formaction'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken,
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify({ selected_products: selectedIds })
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.error || 'Sunucu hatası');
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let processedCount = 0;
+            let totalCount = selectedIds.length;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                
+                const chunk = decoder.decode(value, { stream: true });
+                const lines = chunk.split('\n');
+                
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const msg = JSON.parse(line);
+                        if (msg.type === 'start') {
+                            totalCount = msg.total;
+                            updateProgress(processedCount, totalCount);
+                            logToModal('info', `İşlem başladı. Toplam: ${totalCount}`);
+                        } else if (msg.type === 'result') {
+                            processedCount++;
+                            updateProgress(processedCount, totalCount);
+                            const res = msg.data;
+                            if (res.success) {
+                                logToModal('success', `<b>${res.product_name}</b> > ${res.cat_id} - ${res.category_name}`);
+                                // Update row in background
+                                const row = document.querySelector(`tr[data-product-id="${res.product_id}"]`); // We need product_id in response
+                                if (row) {
+                                    const badgeCell = row.querySelector('td:nth-child(4)');
+                                    if (badgeCell) {
+                                        badgeCell.innerHTML = `<span class="badge bg-success" title="Trendyol ID: ${res.cat_id}"><i class="bi bi-check-circle"></i> ${res.cat_id} - ${res.category_name}</span>`;
+                                    }
+                                }
+                            } else {
+                                logToModal('error', `<b>${res.product_name || res.sku}</b>: Hata - ${res.error}`);
+                                const row = document.querySelector(`tr[data-product-id="${res.product_id}"]`); // We need product_id in response
+                                if (row) {
+                                    const badgeCell = row.querySelector('td:nth-child(4)');
+                                    if (badgeCell) {
+                                        badgeCell.innerHTML = `<span class="badge bg-secondary"><i class="bi bi-dash-circle"></i> Eşleşmedi</span><div class="text-danger small mt-1">${res.error}</div>`;
+                                    }
+                                }
+                            }
+                        } else if (msg.type === 'end') {
+                            finishModal();
+                            logToModal('info', 'Tüm işlemler tamamlandı.');
+                        }
+                    } catch (e) {
+                        console.error('JSON parse error', e);
+                    }
+                }
+            }
+        } catch (error) {
+            logToModal('error', `Kritik Hata: ${error.message}`);
+            finishModal();
+        }
     });
 
     document.addEventListener('click', async (event) => {

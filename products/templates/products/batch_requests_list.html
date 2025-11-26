@@ -2,67 +2,181 @@
 
 {% block content %}
 <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-    <h1 class="h2">Trendyol Toplu İşlem Geçmişi</h1>
+    <h1 class="h2">İşlem Geçmişi</h1>
 </div>
 
-<div class="table-responsive">
-    <table class="table table-striped table-sm">
-        <thead>
-            <tr>
-                <th>Tarih</th>
-                <th>Batch ID</th>
-                <th>Tip</th>
-                <th>Durum</th>
-                <th>Toplam</th>
-                <th>Hatalı</th>
-                <th>İşlem</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for batch in batches %}
-            <tr>
-                <td>{{ batch.created_at|date:"d.m.Y H:i" }}</td>
-                <td>{{ batch.batch_request_id }}</td>
-                <td>{{ batch.get_batch_type_display }}</td>
-                <td>
-                    <span class="badge {% if batch.status == 'COMPLETED' %}bg-success{% elif batch.status == 'FAILED' %}bg-danger{% else %}bg-warning{% endif %}">
-                        {{ batch.status }}
-                    </span>
-                </td>
-                <td>{{ batch.item_count }}</td>
-                <td>{{ batch.failed_item_count }}</td>
-                <td>
-                    <a href="{% url 'check_batch_status' batch.batch_request_id %}" class="btn btn-sm btn-outline-primary">
-                        Durum Kontrol Et
-                    </a>
-                    {% if batch.result_json %}
-                    <button type="button" class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#modal-{{ batch.id }}">
-                        Detay
-                    </button>
-                    
-                    <!-- Modal -->
-                    <div class="modal fade" id="modal-{{ batch.id }}" tabindex="-1">
-                        <div class="modal-dialog modal-lg">
-                            <div class="modal-content">
-                                <div class="modal-header">
-                                    <h5 class="modal-title">Batch Detayı</h5>
-                                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                                </div>
-                                <div class="modal-body">
-                                    <pre>{{ batch.result_json|pprint }}</pre>
+<ul class="nav nav-tabs mb-3" id="historyTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="trendyol-tab" data-bs-toggle="tab" data-bs-target="#trendyol" type="button" role="tab" aria-controls="trendyol" aria-selected="true">
+            Trendyol Batch İşlemleri
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="system-tab" data-bs-toggle="tab" data-bs-target="#system" type="button" role="tab" aria-controls="system" aria-selected="false">
+            Sistem Stok Kontrolleri
+        </button>
+    </li>
+</ul>
+
+<div class="tab-content" id="historyTabsContent">
+    <!-- Trendyol Tab -->
+    <div class="tab-pane fade show active" id="trendyol" role="tabpanel" aria-labelledby="trendyol-tab">
+        <div class="table-responsive">
+            <table class="table table-striped table-sm">
+                <thead>
+                    <tr>
+                        <th>Tarih</th>
+                        <th>Batch ID</th>
+                        <th>Tip</th>
+                        <th>Durum</th>
+                        <th>Toplam</th>
+                        <th>Hatalı</th>
+                        <th>İşlem</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for batch in batches %}
+                    <tr>
+                        <td>{{ batch.created_at|date:"d.m.Y H:i" }}</td>
+                        <td>{{ batch.batch_request_id }}</td>
+                        <td>{{ batch.get_batch_type_display }}</td>
+                        <td>
+                            <span class="badge {% if batch.status == 'COMPLETED' %}bg-success{% elif batch.status == 'FAILED' %}bg-danger{% else %}bg-warning{% endif %}">
+                                {{ batch.status }}
+                            </span>
+                        </td>
+                        <td>{{ batch.item_count }}</td>
+                        <td>{{ batch.failed_item_count }}</td>
+                        <td>
+                            <a href="{% url 'check_batch_status' batch.batch_request_id %}" class="btn btn-sm btn-outline-primary">
+                                Durum Kontrol Et
+                            </a>
+                            {% if batch.result_json %}
+                            <button type="button" class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#modal-{{ batch.id }}">
+                                Detay
+                            </button>
+                            
+                            <!-- Modal -->
+                            <div class="modal fade" id="modal-{{ batch.id }}" tabindex="-1">
+                                <div class="modal-dialog modal-lg">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title">Batch Detayı</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <pre>{{ batch.result_json|pprint }}</pre>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-                    {% endif %}
-                </td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="7" class="text-center">Henüz işlem kaydı yok.</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="7" class="text-center">Henüz işlem kaydı yok.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- System Tab -->
+    <div class="tab-pane fade" id="system" role="tabpanel" aria-labelledby="system-tab">
+        <div class="table-responsive">
+            <table class="table table-striped table-sm">
+                <thead>
+                    <tr>
+                        <th>Başlangıç</th>
+                        <th>Bitiş</th>
+                        <th>İşlem Tipi</th>
+                        <th>Tedarikçi</th>
+                        <th>Durum</th>
+                        <th>İlerleme</th>
+                        <th>Mesaj</th>
+                        <th>Detay</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for process in processes %}
+                    <tr>
+                        <td>{{ process.created_at|date:"d.m.Y H:i:s" }}</td>
+                        <td>{{ process.completed_at|date:"H:i:s"|default:"-" }}</td>
+                        <td>{{ process.get_process_type_display }}</td>
+                        <td>{{ process.supplier.name|default:"-" }}</td>
+                        <td>
+                            <span class="badge {% if process.status == 'completed' %}bg-success{% elif process.status == 'failed' %}bg-danger{% elif process.status == 'processing' %}bg-primary{% else %}bg-secondary{% endif %}">
+                                {{ process.get_status_display }}
+                            </span>
+                        </td>
+                        <td>
+                            {% if process.total_items > 0 %}
+                                {{ process.processed_items }} / {{ process.total_items }}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td>
+                            {{ process.message }}
+                            {% if process.error_details %}
+                                <button type="button" class="btn btn-sm btn-link text-danger p-0 ms-1" data-bs-toggle="popover" title="Hata Detayı" data-bs-content="{{ process.error_details }}">
+                                    <i class="fas fa-exclamation-circle"></i>
+                                </button>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if process.details %}
+                            <button type="button" class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#sys-modal-{{ process.id }}">
+                                <i class="fas fa-info-circle"></i>
+                            </button>
+                            
+                            <!-- Modal -->
+                            <div class="modal fade" id="sys-modal-{{ process.id }}" tabindex="-1">
+                                <div class="modal-dialog">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title">İşlem Detayları</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <table class="table table-bordered table-striped">
+                                                <tr><th>Yeni Ürün</th><td>{{ process.details.new_products|default:0 }}</td></tr>
+                                                <tr><th>Güncellenen Ürün</th><td>{{ process.details.updated_products|default:0 }}</td></tr>
+                                                <tr><th>Fiyat Değişimi</th><td>{{ process.details.price_changed|default:0 }}</td></tr>
+                                                <tr><th>Stok Artışı (Adet)</th><td>{{ process.details.stock_increased|default:0 }}</td></tr>
+                                                <tr><th>Stok Azalışı (Adet)</th><td>{{ process.details.stock_decreased|default:0 }}</td></tr>
+                                                <tr><th>Stok Sıfırlanan (Ürün)</th><td>{{ process.details.stock_zeroed|default:0 }}</td></tr>
+                                                <tr><th>Toplam Stok Farkı</th>
+                                                    <td class="{% if process.details.total_stock_diff < 0 %}text-danger{% elif process.details.total_stock_diff > 0 %}text-success{% endif %}">
+                                                        {{ process.details.total_stock_diff|default:0 }}
+                                                    </td>
+                                                </tr>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="8" class="text-center">Henüz sistem işlem kaydı yok.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
 </div>
+
+<script>
+    // Initialize Popovers
+    var popoverTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="popover"]'))
+    var popoverList = popoverTriggerList.map(function (popoverTriggerEl) {
+      return new bootstrap.Popover(popoverTriggerEl)
+    })
+</script>
 {% endblock %}

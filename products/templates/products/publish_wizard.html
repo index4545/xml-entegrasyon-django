@@ -9,7 +9,7 @@
     <div class="card-body">
         <h5 class="card-title">Filtreleme</h5>
         <form method="get" class="row g-3">
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <label class="form-label">Tedarikçi</label>
                 <select name="supplier_id" class="form-select" onchange="this.form.submit()">
                     {% for supplier in suppliers %}
@@ -17,7 +17,7 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <label class="form-label">Kategori (XML)</label>
                 <select name="category" class="form-select">
                     <option value="">Tümü</option>
@@ -26,7 +26,7 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <label class="form-label">Marka</label>
                 <select name="brand" class="form-select">
                     <option value="">Tümü</option>
@@ -35,11 +35,35 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
+                <label class="form-label">Kategori Eşleşme</label>
+                <select name="match_status" class="form-select">
+                    <option value="">Tümü</option>
+                    <option value="matched" {% if match_status == 'matched' %}selected{% endif %}>Eşleşmiş</option>
+                    <option value="unmatched" {% if match_status == 'unmatched' %}selected{% endif %}>Eşleşmemiş</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">AI İçerik</label>
+                <select name="ai_status" class="form-select">
+                    <option value="">Tümü</option>
+                    <option value="generated" {% if ai_status == 'generated' %}selected{% endif %}>Yenilenmiş</option>
+                    <option value="not_generated" {% if ai_status == 'not_generated' %}selected{% endif %}>Yenilenmemiş</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Özellik Durumu</label>
+                <select name="attr_status" class="form-select">
+                    <option value="">Tümü</option>
+                    <option value="mapped" {% if attr_status == 'mapped' %}selected{% endif %}>Tanımlı</option>
+                    <option value="unmapped" {% if attr_status == 'unmapped' %}selected{% endif %}>Tanımsız</option>
+                </select>
+            </div>
+            <div class="col-md-2">
                 <label class="form-label">Arama</label>
                 <div class="input-group">
                     <input type="text" name="q" class="form-control" placeholder="Ürün adı, SKU..." value="{{ search_query|default:'' }}">
-                    <button class="btn btn-primary" type="submit">Filtrele</button>
+                    <button class="btn btn-primary" type="submit"><i class="fas fa-search"></i></button>
                 </div>
             </div>
         </form>
@@ -112,13 +136,13 @@
             <nav aria-label="Page navigation" class="mb-3">
                 <ul class="pagination justify-content-center">
                     {% if products.has_previous %}
-                    <li class="page-item"><a class="page-link" href="?page={{ products.previous_page_number }}&supplier_id={{ selected_supplier_id }}&category={{ selected_category }}&brand={{ selected_brand }}&q={{ search_query }}">Önceki</a></li>
+                    <li class="page-item"><a class="page-link" href="?page={{ products.previous_page_number }}&supplier_id={{ selected_supplier_id }}&category={{ selected_category }}&brand={{ selected_brand }}&q={{ search_query }}&match_status={{ match_status }}&ai_status={{ ai_status }}&attr_status={{ attr_status }}">Önceki</a></li>
                     {% endif %}
                     
                     <li class="page-item disabled"><span class="page-link">Sayfa {{ products.number }} / {{ products.paginator.num_pages }}</span></li>
                     
                     {% if products.has_next %}
-                    <li class="page-item"><a class="page-link" href="?page={{ products.next_page_number }}&supplier_id={{ selected_supplier_id }}&category={{ selected_category }}&brand={{ selected_brand }}&q={{ search_query }}">Sonraki</a></li>
+                    <li class="page-item"><a class="page-link" href="?page={{ products.next_page_number }}&supplier_id={{ selected_supplier_id }}&category={{ selected_category }}&brand={{ selected_brand }}&q={{ search_query }}&match_status={{ match_status }}&ai_status={{ ai_status }}&attr_status={{ attr_status }}">Sonraki</a></li>
                     {% endif %}
                 </ul>
             </nav>

@@ -1,0 +1,63 @@
+{% load product_filters %}
+{% with mapped=mapped_dict|get_item:attr.attribute.id %}
+<tr class="{% if attr.required %}table-warning{% endif %}">
+    <td>
+        <strong>{{ attr.attribute.name }}</strong>
+        <input type="hidden" name="attr_name_{{ attr.attribute.id }}" value="{{ attr.attribute.name }}">
+        {% if attr.required %}
+        <span class="badge bg-danger ms-2">Zorunlu</span>
+        {% endif %}
+    </td>
+    <td>
+        <select name="type_{{ attr.attribute.id }}" class="form-select form-select-sm mapping-type-selector" data-target="value-container-{{ attr.attribute.id }}">
+            <option value="">Seçiniz</option>
+            <option value="fixed" {% if mapped.mapping_type == 'fixed' %}selected{% endif %}>Sabit Değer</option>
+            <option value="xml" {% if mapped.mapping_type == 'xml' %}selected{% endif %}>XML'den Al</option>
+            <option value="smart" {% if mapped.mapping_type == 'smart' %}selected{% endif %}>Açıklamadan Bul (Akıllı)</option>
+        </select>
+    </td>
+    <td>
+        <div id="value-container-{{ attr.attribute.id }}">
+            <!-- Fixed Value Input -->
+            <div class="input-group input-group-sm fixed-input" style="{% if mapped.mapping_type != 'fixed' %}display:none;{% endif %}">
+                {% if attr.attributeValues %}
+                <select name="value_{{ attr.attribute.id }}" class="form-select" {% if mapped.mapping_type != 'fixed' %}disabled{% endif %}>
+                    <option value="">Değer Seçiniz</option>
+                    {% for val in attr.attributeValues %}
+                    <option value="{{ val.id }}" {% if mapped.static_value == val.id|stringformat:"s" %}selected{% endif %}>{{ val.name }}</option>
+                    {% endfor %}
+                </select>
+                {% else %}
+                <input type="text" name="value_{{ attr.attribute.id }}" class="form-control" placeholder="Değer giriniz" value="{{ mapped.static_value|default:'' }}" {% if mapped.mapping_type != 'fixed' %}disabled{% endif %}>
+                {% endif %}
+            </div>
+
+            <!-- XML Key Select -->
+            <div class="input-group input-group-sm xml-input" style="{% if mapped.mapping_type != 'xml' %}display:none;{% endif %}">
+                <select name="value_{{ attr.attribute.id }}" class="form-select" {% if mapped.mapping_type != 'xml' %}disabled{% endif %}>
+                    <option value="">XML Alanı Seçiniz</option>
+                    {% for key in xml_keys %}
+                    <option value="{{ key }}" {% if mapped.xml_attribute_name == key %}selected{% endif %}>{{ key }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Smart Info -->
+            <div class="alert alert-info p-1 mb-0 small smart-input" style="{% if mapped.mapping_type != 'smart' %}display:none;{% endif %}">
+                <i class="fas fa-magic me-1"></i> Ürün açıklamasında geçen değerler otomatik aranacak.
+                <input type="hidden" name="value_{{ attr.attribute.id }}" value="smart_auto" {% if mapped.mapping_type != 'smart' %}disabled{% endif %}>
+            </div>
+        </div>
+    </td>
+    <td>
+        <div class="form-check form-check-inline">
+            <input class="form-check-input" type="checkbox" name="varianter_{{ attr.attribute.id }}" id="var_{{ attr.attribute.id }}" {% if mapped.is_varianter %}checked{% endif %}>
+            <label class="form-check-label" for="var_{{ attr.attribute.id }}">Varyant</label>
+        </div>
+        <div class="form-check form-check-inline">
+            <input class="form-check-input" type="checkbox" name="slicer_{{ attr.attribute.id }}" id="slice_{{ attr.attribute.id }}" {% if mapped.is_slicer %}checked{% endif %}>
+            <label class="form-check-label" for="slice_{{ attr.attribute.id }}">Ayırıcı</label>
+        </div>
+    </td>
+</tr>
+{% endwith %}

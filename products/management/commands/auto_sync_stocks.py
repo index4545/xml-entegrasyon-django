@@ -3,6 +3,7 @@ from django.utils import timezone
 from products.models import Supplier, Product, SupplierSettings, PriceRule, TrendyolBatchRequest, CategoryMapping, TrendyolCategory, ProductImage, BackgroundProcess
 from integrations.services import TrendyolService
 from products.views import calculate_selling_price
+from products.utils import apply_frame_to_image
 import requests
 import xmltodict
 from decimal import Decimal
@@ -14,13 +15,38 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument('--supplier_id', type=int, help='Specific supplier ID to sync', required=False)
+        parser.add_argument('--product_ids', type=str, help='Comma separated list of product IDs to sync', required=False)
+        parser.add_argument('--force', action='store_true', help='Force sync ignoring time interval', required=False)
+        parser.add_argument('--process_type', type=str, help='Process type for logging', default='xml_sync', required=False)
+        parser.add_argument('--published_only', action='store_true', help='Only sync products published to Trendyol', required=False)
+        parser.add_argument('--verify_trendyol', action='store_true', help='Verify prices with Trendyol after sync', required=False)
 
     def handle(self, *args, **options):
         self.stdout.write("Starting auto sync...")
         
         supplier_id = options.get('supplier_id')
+        product_ids_str = options.get('product_ids')
+        force = options.get('force')
+        process_type = options.get('process_type')
+        published_only = options.get('published_only')
+        verify_trendyol = options.get('verify_trendyol')
         
-        if supplier_id:
+        target_skus = []
+        if product_ids_str:
+            try:
+                p_ids = [int(x) for x in product_ids_str.split(',') if x.strip()]
+                # Get SKUs for these products
+                target_skus = list(Product.objects.filter(id__in=p_ids).values_list('sku', flat=True))
+                
+                # If product_ids are provided, we should filter suppliers based on these products
+                relevant_supplier_ids = Product.objects.filter(id__in=p_ids).values_list('supplier_id', flat=True).distinct()
+                suppliers = Supplier.objects.filter(id__in=relevant_supplier_ids)
+                
+                self.stdout.write(f"Syncing specific products: {len(target_skus)} SKUs from {suppliers.count()} suppliers.")
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f"Invalid product_ids: {e}"))
+                return
+        elif supplier_id:
             suppliers = Supplier.objects.filter(id=supplier_id)
         else:
             suppliers = Supplier.objects.filter(is_active=True)
@@ -29,13 +55,13 @@ class Command(BaseCommand):
             try:
                 settings = supplier.settings
             except SupplierSettings.DoesNotExist:
-                if supplier_id: # If manually triggered, create settings if missing or proceed
+                if supplier_id or product_ids_str or force: # If manually triggered, create settings if missing or proceed
                      settings, _ = SupplierSettings.objects.get_or_create(supplier=supplier)
                 else:
                     continue
             
             # Check if it's time to update (only if not manually triggered)
-            if not supplier_id:
+            if not supplier_id and not product_ids_str and not force:
                 if settings.auto_update_interval <= 0:
                     continue
                 
@@ -45,21 +71,44 @@ class Command(BaseCommand):
                     if timezone.now() < next_update:
                         continue
             
+            # Determine target SKUs for this supplier
+            current_target_skus = list(target_skus) if target_skus else []
+            
+            if published_only:
+                published_skus = list(Product.objects.filter(supplier=supplier, is_published_to_trendyol=True).values_list('sku', flat=True))
+                if not published_skus:
+                    self.stdout.write(f"No published products for {supplier.name}, skipping.")
+                    continue
+                
+                if current_target_skus:
+                    # Intersect if both filters are present
+                    current_target_skus = list(set(current_target_skus) & set(published_skus))
+                    if not current_target_skus:
+                        self.stdout.write(f"No matching published products for {supplier.name} in selected list.")
+                        continue
+                else:
+                    current_target_skus = published_skus
+
             self.stdout.write(f"Processing supplier: {supplier.name}")
             
             # Create Background Process Record
             process = BackgroundProcess.objects.create(
-                process_type='xml_sync',
+                process_type=process_type,
                 supplier=supplier,
                 status='processing',
                 message='XML indiriliyor...'
             )
             
             try:
-                self.sync_supplier(supplier, settings, process)
+                self.sync_supplier(supplier, settings, process, current_target_skus)
+                
+                if verify_trendyol:
+                    self.verify_trendyol_prices(supplier, process, current_target_skus)
+                
                 process.status = 'completed'
                 process.completed_at = timezone.now()
-                process.message = 'İşlem başarıyla tamamlandı.'
+                if not verify_trendyol: # If verified, message is updated in verify function
+                    process.message = 'İşlem başarıyla tamamlandı.'
                 process.save()
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f"Error processing {supplier.name}: {e}"))
@@ -73,7 +122,111 @@ class Command(BaseCommand):
             settings.last_auto_update = timezone.now()
             settings.save()
 
-    def sync_supplier(self, supplier, settings, process):
+    def verify_trendyol_prices(self, supplier, process, target_skus=None):
+        """
+        Fetches live data from Trendyol and compares with local DB.
+        If discrepancies found, sends update.
+        """
+        self.stdout.write("Verifying Trendyol prices...")
+        process.message += " | Trendyol fiyatları doğrulanıyor..."
+        process.save()
+        
+        from integrations.models import TrendyolSettings
+        ty_settings = TrendyolSettings.objects.filter(is_active=True).first()
+        if not ty_settings:
+            return
+
+        service = TrendyolService(user=ty_settings.user)
+        
+        # Get published products for this supplier
+        products = Product.objects.filter(supplier=supplier, is_published_to_trendyol=True)
+        if target_skus:
+            products = products.filter(sku__in=target_skus)
+            
+        # We need barcodes to query Trendyol
+        # Since we can't query by barcode list efficiently for thousands of items (URL length limit),
+        # we will fetch all products page by page and filter in memory OR query in small batches.
+        # Querying in small batches is safer.
+        
+        barcodes = list(products.values_list('barcode', flat=True))
+        barcodes = [b for b in barcodes if b]
+        
+        if not barcodes:
+            return
+
+        batch_size = 50 # Trendyol allows filtering by barcode, let's try 50 at a time
+        mismatched_items = []
+        
+        total_checked = 0
+        
+        for i in range(0, len(barcodes), batch_size):
+            batch_barcodes = barcodes[i:i+batch_size]
+            
+            try:
+                ty_response = service.get_products(barcodes=batch_barcodes)
+                ty_products = ty_response.get('content', [])
+                
+                # Map by barcode
+                ty_map = {p['barcode']: p for p in ty_products}
+                
+                # Compare
+                for barcode in batch_barcodes:
+                    if barcode not in ty_map:
+                        continue
+                        
+                    ty_p = ty_map[barcode]
+                    local_p = Product.objects.filter(barcode=barcode).first()
+                    
+                    if not local_p: continue
+                    
+                    # Compare Price (Sale Price)
+                    ty_price = Decimal(str(ty_p.get('salePrice', 0)))
+                    local_price = local_p.selling_price
+                    
+                    # Compare Stock
+                    ty_stock = int(ty_p.get('quantity', 0))
+                    local_stock = local_p.stock_quantity
+                    
+                    price_diff = abs(ty_price - local_price) > Decimal('0.1')
+                    stock_diff = ty_stock != local_stock
+                    
+                    if price_diff or stock_diff:
+                        self.stdout.write(f"Mismatch for {barcode}: TY Price={ty_price}, Local={local_price} | TY Stock={ty_stock}, Local={local_stock}")
+                        mismatched_items.append({
+                            "barcode": barcode,
+                            "quantity": local_stock,
+                            "salePrice": float(local_price),
+                            "listPrice": float(local_price)
+                        })
+                        
+                total_checked += len(batch_barcodes)
+                
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f"Error verifying batch: {e}"))
+        
+        if mismatched_items:
+            self.stdout.write(self.style.WARNING(f"Found {len(mismatched_items)} mismatches. Sending correction..."))
+            process.message += f" | {len(mismatched_items)} uyumsuzluk bulundu, düzeltiliyor..."
+            process.save()
+            
+            results = service.update_price_and_inventory(mismatched_items)
+            
+            for res in results:
+                if "batchRequestId" in res:
+                    TrendyolBatchRequest.objects.create(
+                        batch_request_id=res['batchRequestId'],
+                        batch_type='ProductInventoryUpdate',
+                        item_count=len(mismatched_items),
+                        process=process
+                    )
+                    process.message += f" | Düzeltme Batch: {res['batchRequestId']}"
+        else:
+            self.stdout.write(self.style.SUCCESS("Verification complete. No mismatches found."))
+            process.message += " | Doğrulama tamamlandı, fark yok."
+        
+        process.save()
+
+    def sync_supplier(self, supplier, settings, process, target_skus=None):
         # 1. Fetch XML
         try:
             response = requests.get(supplier.xml_url, timeout=120) # Increased timeout
@@ -139,10 +292,24 @@ class Command(BaseCommand):
         # Cache price rules and commissions
         price_rules = list(PriceRule.objects.filter(supplier=supplier))
         cat_mappings = {m.xml_category_name: m for m in CategoryMapping.objects.all()}
+        ty_commissions = {c.trendyol_id: c.commission_rate for c in TrendyolCategory.objects.all()}
         
         count_created = 0
         count_updated = 0
         processed_count = 0
+        
+        # İstatistikler
+        stats = {
+            'new_products': 0,
+            'updated_products': 0,
+            'price_changed': 0,
+            'stock_increased': 0,
+            'stock_decreased': 0,
+            'total_stock_diff': 0,
+            'stock_zeroed': 0,
+            'trendyol_sent_items': 0,
+            'trendyol_batch_id': None
+        }
 
         for item in products_list:
             processed_count += 1
@@ -154,6 +321,10 @@ class Command(BaseCommand):
             # 1. SKU
             sku = item.get('Product_code') or item.get('StokKodu') or item.get('UrunKodu') or item.get('sku') or item.get('code') or item.get('id') or item.get('g:id')
             if not sku:
+                continue
+            
+            # Filter by target SKUs if provided
+            if target_skus and sku not in target_skus:
                 continue
             
             # 2. Name
@@ -217,30 +388,60 @@ class Command(BaseCommand):
             commission_rate = 0
             if category_path in cat_mappings:
                 mapping = cat_mappings[category_path]
-                commission_rate = mapping.commission_rate or 0
+                if mapping.trendyol_category_id in ty_commissions:
+                    commission_rate = ty_commissions[mapping.trendyol_category_id]
             
             # Calculate Selling Price
-            new_selling_price = calculate_selling_price(
-                new_buying_price, 
-                settings, 
-                price_rules, 
-                commission_rate
-            )
+            try:
+                new_selling_price = calculate_selling_price(
+                    new_buying_price, 
+                    settings, 
+                    price_rules, 
+                    commission_rate
+                )
+            except Exception as e:
+                # If price calculation fails, and we need to zero stock
+                if settings.zero_stock_on_error and sku in existing_products:
+                    new_stock = 0
+                    # Use existing price to avoid validation errors
+                    new_selling_price = existing_products[sku].selling_price
+                    self.stdout.write(self.style.WARNING(f"Price calc error for {sku}, zeroing stock: {e}"))
+                else:
+                    # Skip this item if we can't calculate price and it's not an existing item we can zero
+                    continue
 
             if sku in existing_products:
                 # UPDATE EXISTING PRODUCT
                 product = existing_products[sku]
                 
                 # Check for changes
-                stock_changed = product.stock_quantity != new_stock
+                stock_diff = new_stock - product.stock_quantity
+                stock_changed = stock_diff != 0
                 price_changed = abs(product.buying_price - new_buying_price) > Decimal('0.01')
                 
+                # Force update if we are zeroing due to error (implicit in new_stock=0)
+                
                 if stock_changed or price_changed:
+                    if stock_changed:
+                        if stock_diff > 0:
+                            stats['stock_increased'] += 1
+                        else:
+                            stats['stock_decreased'] += 1
+                        
+                        if new_stock == 0:
+                            stats['stock_zeroed'] += 1
+                        
+                        stats['total_stock_diff'] += stock_diff
+
+                    if price_changed:
+                        stats['price_changed'] += 1
+
                     product.stock_quantity = new_stock
                     product.buying_price = new_buying_price
                     product.selling_price = new_selling_price
                     product.save()
                     count_updated += 1
+                    stats['updated_products'] += 1
                     
                     # If published to Trendyol, add to update payload
                     if product.is_published_to_trendyol and product.barcode:
@@ -270,24 +471,42 @@ class Command(BaseCommand):
                     product.barcode = barcode
                     product.save()
                 
+                # Frame Settings
+                use_frame = False
+                frame_path = None
+                if hasattr(supplier, 'settings') and supplier.settings.use_frame and supplier.settings.frame_image:
+                    use_frame = True
+                    frame_path = supplier.settings.frame_image.path
+
+                def create_product_image(url, is_primary=False):
+                    pi = ProductImage(product=product, image_url=url, is_primary=is_primary)
+                    if use_frame and frame_path:
+                        try:
+                            processed = apply_frame_to_image(url, frame_path)
+                            if processed:
+                                pi.processed_image.save(processed.name, processed, save=False)
+                        except Exception as e:
+                            print(f"Frame error: {e}")
+                    pi.save()
+
                 # Handle Images
                 # Image1, Image2... Image5
                 for i in range(1, 6):
                     img_key = f'Image{i}'
                     img_url = item.get(img_key)
                     if img_url:
-                        ProductImage.objects.create(product=product, image_url=img_url, is_primary=(i==1))
+                        create_product_image(img_url, is_primary=(i==1))
                 
                 # RSS / Google Merchant Image Links
                 img_link = item.get('image_link') or item.get('g:image_link')
                 if img_link:
-                     ProductImage.objects.create(product=product, image_url=img_link, is_primary=True)
+                     create_product_image(img_link, is_primary=True)
                 
                 # Additional Images
                 for k, v in item.items():
                     if k.startswith('additional_image_link') or k.startswith('g:additional_image_link'):
                         if v:
-                            ProductImage.objects.create(product=product, image_url=v)
+                            create_product_image(v)
 
                 # Other image formats
                 images = item.get('Resimler') or item.get('Images') or item.get('images')
@@ -304,17 +523,19 @@ class Command(BaseCommand):
                     
                     for img_url in img_list:
                         if isinstance(img_url, str):
-                            ProductImage.objects.create(product=product, image_url=img_url)
+                            create_product_image(img_url)
                         elif isinstance(img_url, dict):
                              url = img_url.get('#text') or img_url.get('url')
                              if url:
-                                 ProductImage.objects.create(product=product, image_url=url)
+                                 create_product_image(url)
                 
                 count_created += 1
+                stats['new_products'] += 1
 
         self.stdout.write(self.style.SUCCESS(f"Sync complete. Created: {count_created}, Updated: {count_updated}"))
         process.message = f"Tamamlandı. Eklenen: {count_created}, Güncellenen: {count_updated}"
         process.processed_items = total_items
+        process.details = stats
         process.save()
 
         if updated_items_payload:
@@ -340,10 +561,20 @@ class Command(BaseCommand):
                     TrendyolBatchRequest.objects.create(
                         batch_request_id=res['batchRequestId'],
                         batch_type='ProductInventoryUpdate',
-                        item_count=len(updated_items_payload) # This is approximate per batch
+                        item_count=len(updated_items_payload), # This is approximate per batch
+                        process=process
                     )
+                    stats['trendyol_batch_id'] = res['batchRequestId']
+                    stats['trendyol_sent_items'] = len(updated_items_payload)
+                    process.details = stats
+                    process.message = f"XML Tamamlandı. Trendyol'a {len(updated_items_payload)} ürün gönderildi (Batch: {res['batchRequestId']}). Sonuç bekleniyor..."
+                    process.save()
                 else:
                     self.stdout.write(self.style.ERROR(f"Error sending batch: {res}"))
+                    process.message += f" | Trendyol Gönderim Hatası: {res}"
+                    process.save()
         else:
             self.stdout.write("No changes detected for Trendyol.")
+            process.message += " | Trendyol için değişiklik yok."
+            process.save()
 

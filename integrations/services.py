@@ -150,3 +150,61 @@ class TrendyolService:
                 
         return results
 
+    def archive_products(self, items):
+        """
+        Trendyol'da ürünleri arşivler veya arşivden çıkarır.
+        items: [{"barcode": "...", "archived": True/False}, ...]
+        """
+        url = f"{self.base_url}/{self.supplier_id}/products/archive-state"
+        
+        if not items:
+            return {"status": "error", "message": "İşlem yapılacak ürün listesi boş."}
+
+        # Max 1000 items per request
+        batch_size = 1000
+        results = []
+        
+        for i in range(0, len(items), batch_size):
+            batch = items[i:i + batch_size]
+            payload = {"items": batch}
+            
+            try:
+                response = requests.put(url, headers=self.get_headers(), json=payload)
+                response.raise_for_status()
+                results.append(response.json())
+            except requests.RequestException as e:
+                error_content = ""
+                if e.response is not None:
+                    error_content = e.response.text
+                results.append({"status": "error", "message": str(e), "details": error_content})
+                
+        return results
+
+    def get_products(self, barcodes=None, page=0, size=50, approved=None):
+        """
+        Trendyol'dan ürünleri çeker.
+        barcodes: List of strings (optional)
+        """
+        url = f"{self.base_url}/{self.supplier_id}/products"
+        
+        params = {
+            "page": page,
+            "size": size
+        }
+        
+        if barcodes:
+            params["barcode"] = ",".join(barcodes)
+            
+        if approved is not None:
+            params["approved"] = approved
+
+        try:
+            response = requests.get(url, headers=self.get_headers(), params=params)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            # 404 dönerse ürün bulunamadı demektir, boş liste dönelim
+            if e.response is not None and e.response.status_code == 404:
+                return {"content": []}
+            raise Exception(f"API Hatası (get_products): {str(e)}")
+

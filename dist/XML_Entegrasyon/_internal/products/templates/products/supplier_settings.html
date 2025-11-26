@@ -1,0 +1,330 @@
+{% extends 'products/base.html' %}
+
+{% block title %}Tedarikçi Ayarları{% endblock %}
+
+{% block header %}Tedarikçi Ayarları{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-3">
+        <div class="list-group">
+            {% for supplier in suppliers %}
+            <a href="{% url 'supplier_settings' %}?supplier_id={{ supplier.id }}" 
+               class="list-group-item list-group-item-action {% if selected_supplier.id == supplier.id %}active{% endif %}">
+                {{ supplier.name }}
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="col-md-9">
+        {% if selected_supplier %}
+        
+        <!-- General Settings -->
+        <div class="card card-custom mb-4">
+            <div class="card-header">
+                <h5 class="card-title mb-0">{{ selected_supplier.name }} - Genel Ayarlar</h5>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Varsayılan Kar Marjı (%)</label>
+                            {{ form.profit_margin }}
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Sabit Kargo/Maliyet (TL)</label>
+                            {{ form.shipping_cost }}
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Ürün Kodu Ön Eki</label>
+                        {{ form.sku_prefix }}
+                        <div class="form-text">Ürün kodlarının başına eklenecek metin (Örn: TED1-).</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Minimum Stok Limiti</label>
+                        {{ form.min_stock }}
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="form-check form-switch">
+                            {{ form.include_trendyol_commission }}
+                            <label class="form-check-label" for="{{ form.include_trendyol_commission.id_for_label }}">Trendyol Komisyonunu Fiyata Dahil Et</label>
+                            <div class="form-text">
+                                Etkinleştirilirse, ürünün kategorisine ait Trendyol komisyon oranı, hesaplanan satış fiyatına eklenir.
+                                <br><code>Satış Fiyatı = Hedef Fiyat / (1 - Komisyon Oranı)</code>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Varsayılan Komisyon Oranı (%)</label>
+                        {{ form.default_commission_rate }}
+                        <div class="form-text">Eğer ürünün kategorisi için özel bir komisyon oranı bulunamazsa bu oran kullanılır.</div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Hizmet Bedeli (TL) - KDV Dahil</label>
+                            {{ form.service_fee }}
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Stopaj Oranı (%)</label>
+                            {{ form.withholding_tax_rate }}
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <div class="form-check form-switch">
+                                {{ form.buying_price_includes_vat }}
+                                <label class="form-check-label" for="{{ form.buying_price_includes_vat.id_for_label }}">Alış Fiyatına KDV Dahil</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Alış KDV Oranı (%)</label>
+                            {{ form.buying_vat_rate }}
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Satış KDV Oranı (%)</label>
+                        {{ form.selling_vat_rate }}
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Otomatik Güncelleme Aralığı (Dakika)</label>
+                        {{ form.auto_update_interval }}
+                        <div class="form-text">0 girilirse otomatik güncelleme kapalı olur.</div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <div class="form-check form-switch">
+                                {{ form.price_rounding }}
+                                <label class="form-check-label" for="{{ form.price_rounding.id_for_label }}">Fiyat Yuvarlama Uygulansın (.99)</label>
+                            </div>
+                            <div class="form-check form-switch">
+                                {{ form.use_unique_barcode }}
+                                <label class="form-check-label" for="{{ form.use_unique_barcode.id_for_label }}">Benzersiz Barkod Oluştur</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-check form-switch">
+                                {{ form.stop_stock_update }}
+                                <label class="form-check-label" for="{{ form.stop_stock_update.id_for_label }}">Stok Güncellemesi Yapılmasın</label>
+                            </div>
+                            <div class="form-check form-switch">
+                                {{ form.stop_price_update }}
+                                <label class="form-check-label" for="{{ form.stop_price_update.id_for_label }}">Fiyat Güncellemesi Yapılmasın</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" name="save_settings" class="btn btn-primary"><i class="fas fa-save me-2"></i>Ayarları Kaydet</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Price Rules -->
+        <div class="card card-custom mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">Fiyat Aralığı Kuralları</h5>
+                <button class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#addRuleModal">
+                    <i class="fas fa-plus me-1"></i> Yeni Kural Ekle
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover table-sm align-middle">
+                        <thead>
+                            <tr>
+                                <th>Fiyat >=</th>
+                                <th>< Fiyat</th>
+                                <th>Kural Tipi</th>
+                                <th>İşlem Tipi</th>
+                                <th>İşlem Miktarı</th>
+                                <th>Ek Fiyat (TL)</th>
+                                <th>İşlem</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for rule in price_rules %}
+                            <tr>
+                                <td>{{ rule.min_price }}</td>
+                                <td>{{ rule.max_price }}</td>
+                                <td>{{ rule.get_rule_type_display }}</td>
+                                <td>{{ rule.get_operation_type_display }}</td>
+                                <td>{{ rule.value }}</td>
+                                <td>{{ rule.extra_cost }}</td>
+                                <td>
+                                    <button type="button" class="btn btn-sm btn-outline-primary edit-rule-btn" 
+                                        data-id="{{ rule.id }}"
+                                        data-min="{{ rule.min_price }}"
+                                        data-max="{{ rule.max_price }}"
+                                        data-type="{{ rule.rule_type }}"
+                                        data-op="{{ rule.operation_type }}"
+                                        data-val="{{ rule.value }}"
+                                        data-extra="{{ rule.extra_cost }}">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <form method="post" style="display:inline;">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="rule_id" value="{{ rule.id }}">
+                                        <button type="submit" name="delete_rule" class="btn btn-sm btn-outline-danger" onclick="return confirm('Silmek istediğinize emin misiniz?')">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="7" class="text-center text-muted">Henüz kural eklenmemiş.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Preview Section -->
+        <div class="card card-custom">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Fiyat Önizleme (Örnek 5 Ürün)</h5>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-sm">
+                        <thead>
+                            <tr>
+                                <th>Ürün Adı</th>
+                                <th>Maliyet</th>
+                                <th>Hesaplanan Satış Fiyatı</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for p in preview_products %}
+                            <tr>
+                                <td>{{ p.name }}</td>
+                                <td>{{ p.cost }} TL</td>
+                                <td class="fw-bold text-success">{{ p.new_price }} TL</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="3" class="text-center">Önizleme için ürün bulunamadı.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add Rule Modal -->
+        <div class="modal fade" id="addRuleModal" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Yeni Fiyat Kuralı Ekle</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <form method="post">
+                        <div class="modal-body">
+                            {% csrf_token %}
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Min Fiyat</label>
+                                    {{ rule_form.min_price }}
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Max Fiyat</label>
+                                    {{ rule_form.max_price }}
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Kural Tipi</label>
+                                    {{ rule_form.rule_type }}
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">İşlem Tipi</label>
+                                    {{ rule_form.operation_type }}
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">İşlem Miktarı</label>
+                                    {{ rule_form.value }}
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Ek Fiyat (TL)</label>
+                                    {{ rule_form.extra_cost }}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">İptal</button>
+                            <button type="submit" name="save_rule" class="btn btn-primary">Ekle</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="alert alert-info">Lütfen soldan bir tedarikçi seçiniz.</div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const editBtns = document.querySelectorAll('.edit-rule-btn');
+    const modal = document.getElementById('addRuleModal');
+    const modalTitle = modal.querySelector('.modal-title');
+    const form = modal.querySelector('form');
+    const submitBtn = modal.querySelector('button[type="submit"]');
+    
+    // Hidden ID input
+    let idInput = document.getElementById('edit_rule_id');
+    if (!idInput) {
+        idInput = document.createElement('input');
+        idInput.type = 'hidden';
+        idInput.name = 'edit_rule_id';
+        idInput.id = 'edit_rule_id';
+        form.appendChild(idInput);
+    }
+
+    const minInput = modal.querySelector('[name="min_price"]');
+    const maxInput = modal.querySelector('[name="max_price"]');
+    const typeInput = modal.querySelector('[name="rule_type"]');
+    const opInput = modal.querySelector('[name="operation_type"]');
+    const valInput = modal.querySelector('[name="value"]');
+    const extraInput = modal.querySelector('[name="extra_cost"]');
+
+    editBtns.forEach(btn => {
+        btn.addEventListener('click', function() {
+            modalTitle.textContent = 'Fiyat Kuralını Düzenle';
+            submitBtn.textContent = 'Güncelle';
+            
+            idInput.value = this.dataset.id;
+            minInput.value = this.dataset.min.replace(',', '.');
+            maxInput.value = this.dataset.max.replace(',', '.');
+            typeInput.value = this.dataset.type;
+            opInput.value = this.dataset.op;
+            valInput.value = this.dataset.val.replace(',', '.');
+            extraInput.value = this.dataset.extra.replace(',', '.');
+            
+            new bootstrap.Modal(modal).show();
+        });
+    });
+
+    // Reset modal on close
+    modal.addEventListener('hidden.bs.modal', function () {
+        modalTitle.textContent = 'Yeni Fiyat Kuralı Ekle';
+        submitBtn.textContent = 'Ekle';
+        idInput.value = '';
+        form.reset();
+    });
+});
+</script>
+{% endblock %}
