@@ -899,11 +899,31 @@ def publish_wizard(request):
 
             # Resimler
             image_urls = []
+            
+            # Çerçeve Uygulama (Eğer ayar varsa ve henüz işlenmemişse)
+            if supplier_settings and supplier_settings.use_frame and supplier_settings.frame_image:
+                for img in p.images.all():
+                    # Eğer zaten işlenmiş görsel varsa tekrar yapma (Performans için)
+                    # Ancak kullanıcı çerçeveyi değiştirdiyse eskiyi silip yenisini yapmak gerekebilir.
+                    # Şimdilik sadece yoksa oluştur mantığıyla gidiyoruz.
+                    if not img.processed_image:
+                        try:
+                            # Frame işlemini yap
+                            if os.path.exists(supplier_settings.frame_image.path):
+                                processed_content = apply_frame_to_image(img.image_url, supplier_settings.frame_image.path)
+                                if processed_content:
+                                    filename = f"framed_{p.sku}_{img.id}.jpg"
+                                    img.processed_image.save(filename, processed_content, save=True)
+                        except Exception as e:
+                            print(f"Frame error for {p.sku}: {e}")
+
             for img in p.images.all():
                 if img.processed_image:
                     try:
-                        # Processed image varsa tam URL oluştur (Trendyol'un erişebilmesi için public domain olmalı)
-                        image_urls.append(request.build_absolute_uri(img.processed_image.url))
+                        # Processed image varsa tam URL oluştur
+                        # NOT: Localhost'ta çalışıyorsanız Trendyol bu URL'e erişemez!
+                        full_url = request.build_absolute_uri(img.processed_image.url)
+                        image_urls.append(full_url)
                     except:
                         image_urls.append(img.image_url)
                 else:

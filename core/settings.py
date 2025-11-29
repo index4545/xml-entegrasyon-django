@@ -162,3 +162,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Increase max number of fields for large forms (e.g. category matching)
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 10000
+
+# Login Settings
+LOGIN_URL = '/admin/login/'
+LOGIN_REDIRECT_URL = '/dashboard/'
+LOGOUT_REDIRECT_URL = '/admin/login/'

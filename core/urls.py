@@ -22,6 +22,7 @@ from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('accounts/login/', lambda request: redirect('/admin/login/')), # Redirect default login to admin login
     path('', include('products.urls')),
     path('', lambda request: redirect('dashboard')), # Ana sayfayı dashboard'a yönlendir
 ]
