@@ -2,6 +2,9 @@
 
 Bu sistem, belirtilen XML kaynağından ürünleri çeker ve Trendyol'a aktarılmasını sağlar.
 
+## 📁 Repository
+[GitHub Repository](https://github.com/index4545/xml-entegrasyon-django)
+
 ## Kurulum ve Çalıştırma
 
 1.  **Sanal Ortamı Aktifleştirin:**
