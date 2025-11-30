@@ -1,0 +1,138 @@
+{% load static %}
+<style>
+    #attributeModal .modal-dialog {
+        max-width: min(1100px, 95vw);
+    }
+
+    #attributeModal .modal-body {
+        max-height: 70vh;
+        overflow-y: auto;
+    }
+
+    .attribute-section + .attribute-section {
+        margin-top: 1.5rem;
+    }
+
+    .attribute-card {
+        border: 1px solid rgba(0,0,0,0.08);
+    }
+
+    .attribute-card .card-header {
+        background: var(--bs-body-bg);
+        border-bottom: 1px solid rgba(0,0,0,0.05);
+    }
+
+    @media (max-width: 576px) {
+        #attributeModal .modal-body {
+            max-height: 60vh;
+        }
+    }
+</style>
+
+<form method="post" action="{% url 'save_product_attributes' product.id %}">
+    {% csrf_token %}
+    <div class="modal-header flex-column flex-sm-row align-items-start align-items-sm-center gap-2">
+        <div>
+            <h5 class="modal-title mb-1">Özellikleri Düzenle: {{ product.sku }}</h5>
+            <small class="text-muted">Kategori: {{ product.trendyol_category_id }}</small>
+        </div>
+        <button type="button" class="btn-close ms-sm-auto" data-bs-dismiss="modal" aria-label="Close"></button>
+    </div>
+    <div class="modal-body">
+        <div class="alert alert-light border shadow-sm mb-4">
+            <div class="small fw-semibold mb-1">Ürün Bilgisi</div>
+            <div class="d-flex flex-column flex-sm-row justify-content-between gap-2 small text-muted">
+                <span><strong>SKU:</strong> {{ product.sku }}</span>
+                <span class="text-truncate" title="{{ product.name }}">
+                    <strong>Ad:</strong> {{ product.name }}
+                </span>
+            </div>
+        </div>
+
+        <div class="attribute-section">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Zorunlu Özellikler</h6>
+                <span class="badge bg-danger-subtle text-danger border border-danger-subtle">{{ required_attributes|length }}</span>
+            </div>
+            {% if required_attributes %}
+                <div class="row row-cols-1 row-cols-md-2 g-3">
+                    {% for attr in required_attributes %}
+                        <div class="col">
+                            <div class="card h-100 attribute-card">
+                                <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                                    <span class="fw-semibold small">{{ attr.name }}</span>
+                                    {% if attr.is_defined %}
+                                        <span class="badge bg-success-subtle text-success border border-success-subtle">Tanımlı</span>
+                                    {% else %}
+                                        <span class="badge bg-danger text-white">Eksik</span>
+                                    {% endif %}
+                                </div>
+                                <div class="card-body">
+                                    {% include 'products/partials/components/attribute_field.html' with attr=attr %}
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="alert alert-secondary small mb-0">Bu kategori için zorunlu özellik bulunamadı.</div>
+            {% endif %}
+        </div>
+
+        <div class="attribute-section">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Tanımlanmış Opsiyonel Özellikler</h6>
+                <span class="badge bg-success-subtle text-success border border-success-subtle">{{ defined_optional_attributes|length }}</span>
+            </div>
+            {% if defined_optional_attributes %}
+                <div class="row row-cols-1 row-cols-md-2 g-3">
+                    {% for attr in defined_optional_attributes %}
+                        <div class="col">
+                            <div class="card h-100 attribute-card">
+                                <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                                    <span class="fw-semibold small">{{ attr.name }}</span>
+                                    <span class="badge bg-success text-white">Tanımlı</span>
+                                </div>
+                                <div class="card-body">
+                                    {% include 'products/partials/components/attribute_field.html' with attr=attr %}
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="alert alert-light border small mb-0">Tanımlanmış opsiyonel özellik yok.</div>
+            {% endif %}
+        </div>
+
+        <div class="attribute-section">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Tanımlanmamış Opsiyonel Özellikler</h6>
+                <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">{{ undefined_optional_attributes|length }}</span>
+            </div>
+            {% if undefined_optional_attributes %}
+                <div class="row row-cols-1 row-cols-md-2 g-3">
+                    {% for attr in undefined_optional_attributes %}
+                        <div class="col">
+                            <div class="card h-100 attribute-card">
+                                <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                                    <span class="fw-semibold small">{{ attr.name }}</span>
+                                    <span class="badge bg-secondary text-white">Tanımsız</span>
+                                </div>
+                                <div class="card-body">
+                                    {% include 'products/partials/components/attribute_field.html' with attr=attr %}
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="alert alert-light border small mb-0">Tüm opsiyonel alanlar tanımlanmış.</div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="modal-footer d-flex flex-column flex-sm-row gap-2">
+        <button type="button" class="btn btn-outline-secondary w-100 w-sm-auto" data-bs-dismiss="modal">İptal</button>
+        <button type="submit" class="btn btn-primary w-100 w-sm-auto">Kaydet</button>
+    </div>
+</form>

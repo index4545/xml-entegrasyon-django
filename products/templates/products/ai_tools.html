@@ -59,6 +59,22 @@
                 </select>
             </div>
             <div class="col-md-2">
+                <label class="form-label">Özellik Durumu</label>
+                <select name="attribute_status" class="form-select">
+                    <option value="">Tümü</option>
+                    <option value="defined" {% if attribute_status == 'defined' %}selected{% endif %}>Tanımlı</option>
+                    <option value="undefined" {% if attribute_status == 'undefined' %}selected{% endif %}>Tanımsız</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Yayın Durumu</label>
+                <select name="publish_status" class="form-select">
+                    <option value="">Tümü</option>
+                    <option value="published" {% if publish_status == 'published' %}selected{% endif %}>Yayında</option>
+                    <option value="not_published" {% if publish_status == 'not_published' %}selected{% endif %}>Yayında Değil</option>
+                </select>
+            </div>
+            <div class="col-md-2">
                 <label class="form-label">İçerik Durumu</label>
                 <select name="ai_status" class="form-select">
                     <option value="">Tümü</option>
@@ -102,6 +118,9 @@
         </button>
         <button type="submit" class="btn btn-primary" id="btnMatchCategories" formaction="{% url 'ai_match_categories' %}" {% if not settings or not settings.api_key %}disabled{% endif %}>
             <i class="bi bi-tags"></i> AI ile Kategori Eşleştir
+        </button>
+        <button type="submit" class="btn btn-info text-white" id="btnMatchAttributes" formaction="{% url 'ai_match_attributes' %}" {% if not settings or not settings.api_key %}disabled{% endif %}>
+            <i class="bi bi-list-check"></i> AI ile Özellik Eşleştir
         </button>
         {% if not settings or not settings.api_key %}
             <span class="text-danger small align-self-center">AI anahtarı tanımlı değil. Önce ayarlarınızı kaydedin.</span>
@@ -168,6 +187,13 @@
                                                 - {{ product.trendyol_category_name_display }}
                                             {% endif %}
                                         </span>
+                                        {% if product.trendyol_attributes %}
+                                            <div class="mt-1">
+                                                <span class="badge bg-info text-dark" title="{{ product.trendyol_attributes|length }} özellik tanımlı">
+                                                    <i class="bi bi-list-check"></i> {{ product.trendyol_attributes|length }} Özellik
+                                                </span>
+                                            </div>
+                                        {% endif %}
                                     {% else %}
                                         <span class="badge bg-secondary">
                                             <i class="bi bi-dash-circle"></i> Eşleşmedi
@@ -194,6 +220,11 @@
                                 </td>
                                 <td>
                                     <div class="btn-group btn-group-sm" role="group">
+                                        <button type="button" class="btn btn-outline-primary attr-btn"
+                                            data-product-id="{{ product.id }}"
+                                            data-sku="{{ product.sku }}">
+                                            Özellikler
+                                        </button>
                                         <button type="button" class="btn btn-outline-info detail-btn"
                                             data-product-id="{{ product.id }}"
                                             data-sku="{{ product.sku }}"
@@ -229,7 +260,7 @@
     <ul class="pagination justify-content-center">
         {% if products.has_previous %}
             <li class="page-item">
-                <a class="page-link" href="?page={{ products.previous_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if ai_status_filter %}&ai_status={{ ai_status_filter }}{% endif %}{% if category_filter %}&category={{ category_filter }}{% endif %}{% if brand_filter %}&brand={{ brand_filter }}{% endif %}{% if supplier_id %}&supplier_id={{ supplier_id }}{% endif %}{% if match_status %}&match_status={{ match_status }}{% endif %}&per_page={{ per_page }}">Önceki</a>
+                <a class="page-link" href="?page={{ products.previous_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if ai_status_filter %}&ai_status={{ ai_status_filter }}{% endif %}{% if category_filter %}&category={{ category_filter }}{% endif %}{% if brand_filter %}&brand={{ brand_filter }}{% endif %}{% if supplier_id %}&supplier_id={{ supplier_id }}{% endif %}{% if match_status %}&match_status={{ match_status }}{% endif %}{% if attribute_status %}&attribute_status={{ attribute_status }}{% endif %}&per_page={{ per_page }}">Önceki</a>
             </li>
         {% endif %}
         <li class="page-item disabled">
@@ -237,7 +268,7 @@
         </li>
         {% if products.has_next %}
             <li class="page-item">
-                <a class="page-link" href="?page={{ products.next_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if ai_status_filter %}&ai_status={{ ai_status_filter }}{% endif %}{% if category_filter %}&category={{ category_filter }}{% endif %}{% if brand_filter %}&brand={{ brand_filter }}{% endif %}{% if supplier_id %}&supplier_id={{ supplier_id }}{% endif %}{% if match_status %}&match_status={{ match_status }}{% endif %}&per_page={{ per_page }}">Sonraki</a>
+                <a class="page-link" href="?page={{ products.next_page_number }}{% if request.GET.q %}&q={{ request.GET.q }}{% endif %}{% if ai_status_filter %}&ai_status={{ ai_status_filter }}{% endif %}{% if category_filter %}&category={{ category_filter }}{% endif %}{% if brand_filter %}&brand={{ brand_filter }}{% endif %}{% if supplier_id %}&supplier_id={{ supplier_id }}{% endif %}{% if match_status %}&match_status={{ match_status }}{% endif %}{% if attribute_status %}&attribute_status={{ attribute_status }}{% endif %}&per_page={{ per_page }}">Sonraki</a>
             </li>
         {% endif %}
     </ul>
@@ -332,6 +363,25 @@
     </div>
 </div>
 
+<!-- Attribute Modal -->
+<div class="modal fade" id="attributeModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content" id="attributeModalContent">
+            <div class="modal-header">
+                <h5 class="modal-title">Yükleniyor...</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="text-center py-5">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Yükleniyor...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
@@ -365,6 +415,11 @@
     const originalDescriptionBox = document.getElementById('originalDescriptionBox');
     const aiTitleText = document.getElementById('aiTitleText');
     const aiDescriptionBox = document.getElementById('aiDescriptionBox');
+
+    // Attribute modal references
+    const attributeModalElement = document.getElementById('attributeModal');
+    const attributeModal = attributeModalElement ? new bootstrap.Modal(attributeModalElement) : null;
+    const attributeModalContent = document.getElementById('attributeModalContent');
 
     function buildEndpoint(template, id) {
         return template.replace(/0\/?$/, '') + id + '/';
@@ -520,9 +575,16 @@
 
     aiForm.addEventListener('submit', async (event) => {
         const submitter = event.submitter;
-        const isCategoryMatch = submitter && (submitter.id === 'btnMatchCategories' || (submitter.getAttribute('formaction') && submitter.getAttribute('formaction').includes('match-categories')));
+        const isStreamingAction = submitter && (
+            submitter.id === 'btnMatchCategories' || 
+            submitter.id === 'btnMatchAttributes' ||
+            (submitter.getAttribute('formaction') && (
+                submitter.getAttribute('formaction').includes('match-categories') || 
+                submitter.getAttribute('formaction').includes('match-attributes')
+            ))
+        );
         
-        if (!isCategoryMatch) {
+        if (!isStreamingAction) {
             // Normal submit for other actions (like AI Generate Content)
             // Or we can implement streaming for that too later.
             // For now, let it fall through to default behavior (reload)
@@ -554,7 +616,7 @@
 
         if (processingModal) {
             resetModal();
-            processingStatusText.textContent = 'Kategori eşleştirme başlatılıyor...';
+            processingStatusText.textContent = 'İşlem başlatılıyor...';
             processingCountText.textContent = `0/${selected.length}`;
             processingModal.show();
         }
@@ -607,22 +669,33 @@
                             updateProgress(processedCount, totalCount);
                             const res = msg.data;
                             if (res.success) {
-                                logToModal('success', `<b>${res.product_name}</b> > ${res.cat_id} - ${res.category_name}`);
-                                // Update row in background
-                                const row = document.querySelector(`tr[data-product-id="${res.product_id}"]`); // We need product_id in response
-                                if (row) {
-                                    const badgeCell = row.querySelector('td:nth-child(4)');
-                                    if (badgeCell) {
-                                        badgeCell.innerHTML = `<span class="badge bg-success" title="Trendyol ID: ${res.cat_id}"><i class="bi bi-check-circle"></i> ${res.cat_id} - ${res.category_name}</span>`;
+                                if (res.cat_id) {
+                                    logToModal('success', `<b>${res.product_name}</b> > ${res.cat_id} - ${res.category_name}`);
+                                    // Update row in background
+                                    const row = document.querySelector(`tr[data-product-id="${res.product_id}"]`); // We need product_id in response
+                                    if (row) {
+                                        const badgeCell = row.querySelector('td:nth-child(4)');
+                                        if (badgeCell) {
+                                            badgeCell.innerHTML = `<span class="badge bg-success" title="Trendyol ID: ${res.cat_id}"><i class="bi bi-check-circle"></i> ${res.cat_id} - ${res.category_name}</span>`;
+                                        }
                                     }
+                                } else if (res.attr_count !== undefined) {
+                                    logToModal('success', `<b>${res.sku}</b> > ${res.attr_count} özellik eşleşti.`);
                                 }
                             } else {
                                 logToModal('error', `<b>${res.product_name || res.sku}</b>: Hata - ${res.error}`);
                                 const row = document.querySelector(`tr[data-product-id="${res.product_id}"]`); // We need product_id in response
-                                if (row) {
-                                    const badgeCell = row.querySelector('td:nth-child(4)');
-                                    if (badgeCell) {
-                                        badgeCell.innerHTML = `<span class="badge bg-secondary"><i class="bi bi-dash-circle"></i> Eşleşmedi</span><div class="text-danger small mt-1">${res.error}</div>`;
+                                if (row && res.cat_id === undefined && res.attr_count === undefined) {
+                                    // Only update UI if it was a category match attempt (heuristic)
+                                    // Or we can check submitter.id here if we passed it down, but we didn't.
+                                    // For now, if it's an attribute error, we just log it.
+                                    // If it's a category error (implied by context or if we want to clear the badge), we could.
+                                    // But let's leave the UI update minimal for attributes.
+                                    if (submitter.id === 'btnMatchCategories') {
+                                         const badgeCell = row.querySelector('td:nth-child(4)');
+                                         if (badgeCell) {
+                                             badgeCell.innerHTML = `<span class="badge bg-secondary"><i class="bi bi-dash-circle"></i> Eşleşmedi</span><div class="text-danger small mt-1">${res.error}</div>`;
+                                         }
                                     }
                                 }
                             }
@@ -642,6 +715,23 @@
     });
 
     document.addEventListener('click', async (event) => {
+        const attrBtn = event.target.closest('.attr-btn');
+        if (attrBtn && attributeModal) {
+            const productId = attrBtn.dataset.productId;
+            attributeModalContent.innerHTML = '<div class="modal-header"><h5 class="modal-title">Yükleniyor...</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div><div class="modal-body"><div class="text-center py-5"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Yükleniyor...</span></div></div></div>';
+            attributeModal.show();
+            
+            try {
+                const response = await fetch(`/ai-attributes/${productId}/modal/`);
+                if (!response.ok) throw new Error('İçerik yüklenemedi');
+                const html = await response.text();
+                attributeModalContent.innerHTML = html;
+            } catch (e) {
+                attributeModalContent.innerHTML = `<div class="modal-header"><h5 class="modal-title">Hata</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div><div class="modal-body"><div class="alert alert-danger">Hata: ${e.message}</div></div>`;
+            }
+            return;
+        }
+
         const detailBtn = event.target.closest('.detail-btn');
         if (detailBtn && detailModal) {
             detailSku.textContent = detailBtn.dataset.sku;

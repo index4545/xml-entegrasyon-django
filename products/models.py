@@ -57,6 +57,7 @@ class Product(models.Model):
     # Variant & Attributes
     model_code = models.CharField(max_length=255, blank=True, null=True, verbose_name="Model Kodu (Varyant Grubu)")
     attributes = models.JSONField(default=dict, blank=True, verbose_name="Ürün Özellikleri (XML)")
+    trendyol_attributes = models.JSONField(default=dict, blank=True, verbose_name="Trendyol Özellikleri (AI)")
 
     last_synced_at = models.DateTimeField(null=True, blank=True, verbose_name="Son Eşitleme Tarihi")
 
@@ -182,6 +183,7 @@ class ProductImage(models.Model):
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='images')
     image_url = models.URLField(max_length=1000)
     processed_image = models.ImageField(upload_to='processed_images/', null=True, blank=True, verbose_name="İşlenmiş Görsel")
+    cloudinary_url = models.URLField(max_length=1000, blank=True, null=True, verbose_name="Cloudinary URL")
     is_primary = models.BooleanField(default=False)
 
     def __str__(self):

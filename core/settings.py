@@ -167,3 +167,9 @@ DATA_UPLOAD_MAX_NUMBER_FIELDS = 10000
 LOGIN_URL = '/admin/login/'
 LOGIN_REDIRECT_URL = '/dashboard/'
 LOGOUT_REDIRECT_URL = '/admin/login/'
+
+# Cloudinary Settings
+CLOUDINARY_CLOUD_NAME = 'daestfnch'
+CLOUDINARY_API_KEY = '633569859971455'
+CLOUDINARY_API_SECRET = 'LKmdoYgobmckz97zWSOouhCcuac'
+

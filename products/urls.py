@@ -25,7 +25,10 @@ urlpatterns = [
     path('ai-tools/', ai_views.ai_tools, name='ai_tools'),
     path('ai-generate/', ai_views.ai_generate, name='ai_generate'),
     path('ai-match-categories/', ai_views.ai_match_categories, name='ai_match_categories'),
+    path('ai-match-attributes/', ai_views.ai_match_attributes, name='ai_match_attributes'),
     path('ai-generate/<int:pk>/', ai_views.ai_generate_single, name='ai_generate_single'),
     path('ai-revert/<int:pk>/', ai_views.ai_revert_original, name='ai_revert_original'),
+    path('ai-attributes/<int:pk>/modal/', ai_views.get_product_attributes_modal, name='get_product_attributes_modal'),
+    path('ai-attributes/<int:pk>/save/', ai_views.save_product_attributes, name='save_product_attributes'),
     path('api/test-frame/', views.test_frame_creation, name='test_frame_creation'),
 ]

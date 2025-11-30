@@ -5,6 +5,7 @@ from django.core.paginator import Paginator
 from django.core.management import call_command
 from django.db.models import Q
 from django.urls import reverse
+from django.conf import settings
 from .models import Product, Supplier, CategoryMapping, BrandMapping, SupplierSettings, PriceRule, CategoryAttributeMapping, TrendyolBatchRequest, TrendyolCategory, BackgroundProcess
 from .forms import SupplierSettingsForm, PriceRuleForm
 from integrations.services import TrendyolService
@@ -14,6 +15,8 @@ from django.http import JsonResponse
 import math
 import re
 import base64
+import cloudinary
+import cloudinary.uploader
 from .utils import apply_frame_to_image
 
 def parse_measurement(value_str):
@@ -617,12 +620,10 @@ def publish_wizard(request):
             products = products.exclude(ai_status='generated')
 
     if attr_status:
-        # Özellik eşleştirmesi yapılmış kategori yollarını bul
-        cats_with_attrs = CategoryAttributeMapping.objects.values_list('category_mapping__xml_category_name', flat=True).distinct()
         if attr_status == 'mapped':
-            products = products.filter(category_path__in=cats_with_attrs)
+            products = products.exclude(Q(trendyol_attributes__isnull=True) | Q(trendyol_attributes=[]))
         elif attr_status == 'unmapped':
-            products = products.exclude(category_path__in=cats_with_attrs)
+            products = products.filter(Q(trendyol_attributes__isnull=True) | Q(trendyol_attributes=[]))
 
     # Filtreleme seçenekleri için listeler (Sadece mevcut tedarikçinin ürünlerinden)
     filter_base_products = Product.objects.filter(supplier_id=supplier_id) if supplier_id else Product.objects.all()
@@ -897,6 +898,25 @@ def publish_wizard(request):
                     if found_val:
                         attributes.append({"attributeId": req_id, "attributeValueId": found_val})
 
+            # Özel Kural: Menşei (Origin) her zaman TR (Türkiye) olmalı
+            # Attribute ID: 1192, Value ID: 10617344
+            mensei_attr_id = 1192
+            mensei_tr_value_id = 10617344
+            
+            # Mevcut menşei attribute'ını kontrol et
+            mensei_exists = False
+            for attr in attributes:
+                if attr['attributeId'] == mensei_attr_id:
+                    mensei_exists = True
+                    # Eğer yanlış değer varsa düzelt
+                    if attr.get('attributeValueId') != mensei_tr_value_id:
+                        attr['attributeValueId'] = mensei_tr_value_id
+                    break
+            
+            # Eğer menşei yoksa ekle
+            if not mensei_exists:
+                attributes.append({"attributeId": mensei_attr_id, "attributeValueId": mensei_tr_value_id})
+
             # Resimler
             image_urls = []
             
@@ -919,13 +939,42 @@ def publish_wizard(request):
 
             for img in p.images.all():
                 if img.processed_image:
-                    try:
-                        # Processed image varsa tam URL oluştur
-                        # NOT: Localhost'ta çalışıyorsanız Trendyol bu URL'e erişemez!
-                        full_url = request.build_absolute_uri(img.processed_image.url)
-                        image_urls.append(full_url)
-                    except:
-                        image_urls.append(img.image_url)
+                    # Cloudinary Entegrasyonu
+                    cloudinary_configured = hasattr(settings, 'CLOUDINARY_CLOUD_NAME') and settings.CLOUDINARY_CLOUD_NAME
+                    
+                    if cloudinary_configured:
+                        if img.cloudinary_url:
+                            image_urls.append(img.cloudinary_url)
+                        else:
+                            try:
+                                # Configure Cloudinary
+                                cloudinary.config( 
+                                    cloud_name = settings.CLOUDINARY_CLOUD_NAME, 
+                                    api_key = settings.CLOUDINARY_API_KEY, 
+                                    api_secret = settings.CLOUDINARY_API_SECRET 
+                                )
+                                # Upload
+                                upload_result = cloudinary.uploader.upload(img.processed_image.path)
+                                secure_url = upload_result['secure_url']
+                                
+                                # Save to DB
+                                img.cloudinary_url = secure_url
+                                img.save()
+                                
+                                image_urls.append(secure_url)
+                            except Exception as e:
+                                print(f"Cloudinary upload error: {e}")
+                                # Fallback to local URL (won't work for Trendyol but prevents crash)
+                                full_url = request.build_absolute_uri(img.processed_image.url)
+                                image_urls.append(full_url)
+                    else:
+                        try:
+                            # Processed image varsa tam URL oluştur
+                            # NOT: Localhost'ta çalışıyorsanız Trendyol bu URL'e erişemez!
+                            full_url = request.build_absolute_uri(img.processed_image.url)
+                            image_urls.append(full_url)
+                        except:
+                            image_urls.append(img.image_url)
                 else:
                     image_urls.append(img.image_url)
 

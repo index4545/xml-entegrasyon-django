@@ -212,6 +212,140 @@ class GeminiService:
         
         raise Exception(f"AI Servis Hatası: {str(last_error)}")
 
+    def _get_attribute_match_prompt(self, product_name, description, xml_attributes, trendyol_attributes):
+        # Prepare attributes info for prompt
+        ty_attrs_info = []
+        for attr in trendyol_attributes:
+            info = f"- ID: {attr['attribute']['id']}, İsim: {attr['attribute']['name']}"
+            if attr.get('attributeValues'):
+                values = [f"{v['name']} (ID: {v['id']})" for v in attr['attributeValues'][:50]] # Limit to 50 values to avoid token limit
+                info += f", Değerler: {', '.join(values)}"
+            else:
+                info += ", (Serbest Metin)"
+            ty_attrs_info.append(info)
+        
+        ty_attrs_str = "\n".join(ty_attrs_info)
+
+        # Format XML attributes more clearly
+        xml_attrs_formatted = ""
+        if xml_attributes and isinstance(xml_attributes, dict):
+            # Normalize XML values for better matching
+            normalized_attrs = {}
+            for key, value in xml_attributes.items():
+                if value:
+                    # Normalize: lowercase, replace Turkish chars, strip
+                    normalized_value = str(value).lower().strip()
+                    normalized_value = normalized_value.replace('ı', 'i').replace('ğ', 'g').replace('ü', 'u').replace('ş', 's').replace('ö', 'o').replace('ç', 'c')
+                    normalized_attrs[key] = f"{value} (normalized: {normalized_value})"
+            xml_attrs_formatted = "\n".join([f"- {key}: {value}" for key, value in normalized_attrs.items()])
+        else:
+            xml_attrs_formatted = str(xml_attributes)
+
+        return f"""
+        Sen bir e-ticaret entegrasyon uzmanısın. Aşağıdaki ürün için Trendyol kategori özelliklerini eşleştirmelisin.
+
+        ÜRÜN BİLGİLERİ:
+        Ürün Adı: {product_name}
+        Açıklama: {description[:500]}...
+
+        XML'DEN GELEN ÖZELLİKLER (Tedarikçi Kaynağı):
+        {xml_attrs_formatted}
+
+        HEDEF TRENDYOL ÖZELLİKLERİ:
+        {ty_attrs_str}
+
+        GÖREV:
+        1. Ürün bilgilerini ve XML özelliklerini dikkatlice analiz et.
+        2. Her bir Trendyol özelliği için en uygun değeri belirle.
+        3. KURALLAR:
+           - XML özelliklerinde varsa, ÖNCELİKLE onu kullan (örneğin: "Hacim: 1.5 lt" → "Hacim" özelliği için "1.5 lt" değerini kullan)
+           - XML'de yoksa, ürün adı veya açıklamasından akıllı çıkarım yap
+           - Eğer özellik "Menşei" ise, değeri KESİNLİKLE "TR" (ID'si varsa ID'sini bul yoksa metin olarak) olmalı.
+           - Eğer özellik için belirli değer listesi (Değerler) verilmişse, SADECE o listeden birini seç ve ID'sini kullan.
+           - Değer listesi varsa, XML değerini benzer değerlerle eşleştir (örneğin: "AKRİLİK" → "Akrilik", "PLASTİK" → "Plastik", "BEYAZ" → "Beyaz")
+           - Normalize edilmiş değerleri kullan (küçük harf, Türkçe karakter dönüşümü)
+           - Büyük/küçük harf farklarını göz ardı et ve benzer yazımları eşleştir
+           - Ölçü birimleri için (lt, ml, adet, parça, cm, mm vb.) XML'deki değeri koru ve uygun formata dönüştür.
+           - Malzeme, renk, boyut gibi özellikler için XML'deki değeri doğrudan kullan.
+           - Eğer serbest metin ise, uygun bir metin yaz.
+           - Eğer bir özellik için bilgi bulamıyorsan, boş bırak veya tahmin etme (Zorunlu değilse).
+
+        ÖRNEK EŞLEŞTİRMELER:
+        - XML'de "Hacim: 1.5 lt" varsa → Trendyol "Hacim" özelliği için "1.5 lt" değerini seç
+        - XML'de "Parca Sayisi: 6" varsa → Trendyol "Parça Sayısı" özelliği için "6" değerini kullan
+        - XML'de "Malzeme: AKRİLİK" varsa → Trendyol "Materyal" özelliği için "Akrilik" değerini seç
+        - XML'de "Renk: BEYAZ" varsa → Trendyol "Renk" özelliği için "Beyaz" değerini seç
+        - XML'de "Materyal: PLASTİK" varsa → Trendyol "Materyal" özelliği için "Plastik" değerini seç
+
+        ÇIKTI FORMATI (JSON):
+        {{
+            "attributes": [
+                {{
+                    "attributeId": 123, // Trendyol Özellik ID
+                    "attributeValueId": 456, // Seçilen Değer ID (Eğer listeden seçildiyse)
+                    "customAttributeValue": "Değer" // Eğer serbest metin ise veya ID yoksa
+                }},
+                ...
+            ]
+        }}
+        Sadece JSON çıktısı ver.
+        """
+
+    def match_attributes_with_key(self, product_name, description, xml_attributes, trendyol_attributes, api_key):
+        """
+        Matches product attributes to Trendyol category attributes using AI.
+        """
+        prompt = self._get_attribute_match_prompt(product_name, description, xml_attributes, trendyol_attributes)
+        
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={api_key}"
+        
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"response_mime_type": "application/json"}
+        }
+        
+        max_retries = 3
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, headers=headers, json=payload, timeout=60)
+                
+                if response.status_code == 429:
+                    if attempt < max_retries - 1:
+                        time.sleep(62) 
+                        continue
+                    else:
+                        error_json = response.json()
+                        error_msg = error_json.get('error', {}).get('message', response.text)
+                        raise Exception(f"API Hatası (429 - Kota Aşıldı): {error_msg}")
+
+                if not response.ok:
+                    raise Exception(f"API Hatası ({response.status_code}): {response.text}")
+                
+                result = response.json()
+                if 'candidates' in result and result['candidates']:
+                    text = result['candidates'][0]['content']['parts'][0]['text']
+                    cleaned_text = self._clean_response(text)
+                    try:
+                        data = json.loads(cleaned_text)
+                        return data.get('attributes', [])
+                    except json.JSONDecodeError:
+                        raise Exception(f"JSON Ayrıştırma Hatası: {cleaned_text}")
+                else:
+                    raise Exception(f"API Yanıtı Boş: {result}")
+
+            except Exception as e:
+                last_error = e
+                if "429" not in str(e) and attempt < max_retries - 1:
+                    time.sleep(2)
+                    continue
+                if "429" in str(e):
+                    raise e
+        
+        raise Exception(f"AI Servis Hatası: {str(last_error)}")
+
     def _clean_response(self, text):
         if text.strip().startswith("```json"):
             text = text.strip()[7:]

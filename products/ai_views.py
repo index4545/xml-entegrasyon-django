@@ -7,7 +7,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db.models import Q, Case, When, IntegerField
-from django.http import JsonResponse, StreamingHttpResponse
+from django.http import JsonResponse, StreamingHttpResponse, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.html import strip_tags
@@ -168,7 +168,9 @@ def ai_tools(request):
     brand_filter = request.GET.get('brand', '')
     supplier_id = request.GET.get('supplier_id', '')
     match_status = request.GET.get('match_status', '')
+    attribute_status = request.GET.get('attribute_status', '')
     sort_by = request.GET.get('sort_by', '')
+    publish_status = request.GET.get('publish_status', '')
     
     per_page = request.GET.get('per_page', '20')
     try:
@@ -192,6 +194,12 @@ def ai_tools(request):
         products = Product.objects.all().order_by('created_at')
     else:
         products = Product.objects.all().order_by(status_ordering, '-updated_at')
+
+    # Publish status filter
+    if publish_status == 'published':
+        products = products.filter(is_published_to_trendyol=True)
+    elif publish_status == 'not_published':
+        products = products.filter(is_published_to_trendyol=False)
     
     if supplier_id:
         products = products.filter(supplier_id=supplier_id)
@@ -217,6 +225,12 @@ def ai_tools(request):
         products = products.filter(trendyol_category_id__isnull=False)
     elif match_status == 'unmatched':
         products = products.filter(trendyol_category_id__isnull=True)
+
+    if attribute_status == 'defined':
+        # Exclude null or empty list
+        products = products.exclude(Q(trendyol_attributes__isnull=True) | Q(trendyol_attributes=[]))
+    elif attribute_status == 'undefined':
+        products = products.filter(Q(trendyol_attributes__isnull=True) | Q(trendyol_attributes=[]))
 
     # Get unique categories and brands for filters (Filtered by Supplier)
     filter_base_products = Product.objects.all()
@@ -274,12 +288,14 @@ def ai_tools(request):
         'brand_filter': brand_filter,
         'supplier_id': supplier_id,
         'match_status': match_status,
+        'attribute_status': attribute_status,
         'categories': categories,
         'brands': brands,
         'suppliers': suppliers,
         'status_meta': STATUS_META,
         'per_page': per_page,
         'sort_by': sort_by,
+        'publish_status': publish_status,
     })
 
 def process_single_product_task(product_id, api_key, user_id):
@@ -542,6 +558,284 @@ def process_category_match_task(product_id, api_key, user_id, trendyol_cats_flat
             'product_name': product.name if 'product' in locals() else str(product_id)
         }
 
+def process_attribute_match_task(product_id, api_key, user_id):
+    try:
+        from django.db import connection
+        from django.contrib.auth.models import User
+        
+        product = Product.objects.get(id=product_id)
+        
+        if not product.trendyol_category_id:
+            connection.close()
+            return {'success': False, 'sku': product.sku, 'error': 'Trendyol Kategori ID yok', 'product_id': product.id}
+
+        user = User.objects.get(id=user_id)
+        ty_service = TrendyolService(user=user)
+        ai_service = GeminiService(user=user)
+        
+        # Fetch Attributes for this category
+        try:
+            attr_response = ty_service.get_category_attributes(product.trendyol_category_id)
+            trendyol_attributes = attr_response.get('categoryAttributes', [])
+        except Exception as e:
+            connection.close()
+            return {'success': False, 'sku': product.sku, 'error': f"Trendyol API Hatası: {e}", 'product_id': product.id}
+
+        if not trendyol_attributes:
+            connection.close()
+            return {'success': False, 'sku': product.sku, 'error': 'Kategori özelliği bulunamadı', 'product_id': product.id}
+
+        # Track required attribute ids to validate AI output later
+        required_attribute_map = {
+            attr['attribute']['id']: attr['attribute'].get('name', attr['attribute']['id'])
+            for attr in trendyol_attributes if attr.get('required')
+        }
+
+        # Identify Web Color attribute and default value (Çok Renkli)
+        web_color_attr = None
+        web_color_default_value = None
+        for attr in trendyol_attributes:
+            attr_name = attr['attribute'].get('name', '').strip().lower()
+            if attr_name == 'web color':
+                web_color_attr = attr
+                for val in attr.get('attributeValues', []):
+                    val_name = (val.get('name') or '').strip().lower()
+                    if val_name == 'çok renkli':
+                        web_color_default_value = val
+                        break
+                break
+
+        # Call AI
+        matched_attributes = ai_service.match_attributes_with_key(
+            product.name, 
+            product.description, 
+            product.attributes, 
+            trendyol_attributes, 
+            api_key
+        )
+        matched_attributes = matched_attributes or []
+
+        # Post-process AI results with XML-based corrections
+        import unicodedata
+        def normalize_text(text):
+            if not text:
+                return ""
+            # Decompose, replace, then compose
+            text = unicodedata.normalize('NFD', str(text))
+            text = text.lower().strip()
+            text = text.replace('ı', 'i').replace('ğ', 'g').replace('ü', 'u').replace('ş', 's').replace('ö', 'o').replace('ç', 'c')
+            # Remove combining characters that might be left
+            text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
+            text = unicodedata.normalize('NFC', text)
+            return text
+
+        # Create lookup maps
+        attr_value_map = {}  # attr_id -> {normalized_name: value_id}
+        for attr in trendyol_attributes:
+            attr_id = attr['attribute']['id']
+            values = attr.get('attributeValues', [])
+            attr_value_map[attr_id] = {normalize_text(v['name']): v['id'] for v in values}
+
+        # Apply corrections based on XML attributes
+        for attr in trendyol_attributes:
+            attr_id = attr['attribute']['id']
+            attr_name = attr['attribute']['name']
+            
+            # Special handling for Menşei (Origin) - Always set to TR (Turkey)
+            if attr_id == 1192:  # Menşei attribute ID
+                tr_id = 10617344  # TR ID from Trendyol API
+                existing = next((item for item in matched_attributes if item.get('attributeId') == attr_id), None)
+                if existing:
+                    existing['attributeValueId'] = tr_id
+                    if 'customAttributeValue' in existing:
+                        del existing['customAttributeValue']
+                else:
+                    matched_attributes.append({
+                        'attributeId': attr_id,
+                        'attributeValueId': tr_id
+                    })
+                continue
+            xml_value = None
+            for xml_key, xml_val in product.attributes.items():
+                if xml_val and normalize_text(xml_key) in normalize_text(attr_name) or normalize_text(attr_name) in normalize_text(xml_key):
+                    xml_value = xml_val
+                    break
+            
+            if xml_value:
+                normalized_xml = normalize_text(xml_value)
+                available_values = attr_value_map.get(attr_id, {})
+                
+                # Find best match
+                best_match_id = None
+                for norm_name, val_id in available_values.items():
+                    if normalized_xml == norm_name or normalized_xml in norm_name or norm_name in normalized_xml:
+                        best_match_id = val_id
+                        break
+                
+                if best_match_id:
+                    # Update or add the attribute
+                    existing = next((item for item in matched_attributes if item.get('attributeId') == attr_id), None)
+                    if existing:
+                        existing['attributeValueId'] = best_match_id
+                        if 'customAttributeValue' in existing:
+                            del existing['customAttributeValue']
+                    else:
+                        matched_attributes.append({
+                            'attributeId': attr_id,
+                            'attributeValueId': best_match_id
+                        })
+
+        # Ensure Web Color has fallback option when AI does not provide a value
+        if web_color_attr and web_color_default_value:
+            web_color_id = web_color_attr['attribute']['id']
+            existing_web_color = next((item for item in matched_attributes if item.get('attributeId') == web_color_id), None)
+            needs_default = False
+            if existing_web_color:
+                has_value = existing_web_color.get('attributeValueId') or existing_web_color.get('customAttributeValue')
+                needs_default = not has_value
+            else:
+                needs_default = True
+
+            if needs_default:
+                default_payload = {
+                    'attributeId': web_color_id,
+                    'attributeValueId': web_color_default_value['id']
+                }
+                if existing_web_color:
+                    existing_web_color.clear()
+                    existing_web_color.update(default_payload)
+                else:
+                    matched_attributes.append(default_payload)
+
+        if matched_attributes:
+            missing_required = []
+            matched_ids = {item.get('attributeId') for item in matched_attributes if item.get('attributeId')}
+            for req_id, req_name in required_attribute_map.items():
+                if req_id not in matched_ids:
+                    missing_required.append(req_name)
+
+            if missing_required:
+                message = "Zorunlu özellikler eksik: " + ", ".join(missing_required)
+                product.ai_last_error = message
+                product.save(update_fields=['ai_last_error'])
+                connection.close()
+                return {
+                    'success': False,
+                    'sku': product.sku,
+                    'error': message,
+                    'product_id': product.id
+                }
+
+            product.trendyol_attributes = matched_attributes
+            product.ai_last_error = ""
+            product.save(update_fields=['trendyol_attributes', 'ai_last_error'])
+            
+            connection.close()
+            return {
+                'success': True, 
+                'sku': product.sku, 
+                'attr_count': len(matched_attributes),
+                'product_id': product.id
+            }
+        else:
+            product.ai_last_error = "AI özellik döndürmedi."
+            product.save(update_fields=['ai_last_error'])
+            connection.close()
+            return {
+                'success': False, 
+                'sku': product.sku, 
+                'error': 'AI returned empty attributes', 
+                'product_id': product.id
+            }
+
+    except Exception as e:
+        from django.db import connection
+        try:
+            product = Product.objects.get(id=product_id)
+            product.ai_last_error = f"Hata: {str(e)}"
+            product.save(update_fields=['ai_last_error'])
+        except:
+            pass
+        connection.close()
+        return {
+            'success': False, 
+            'sku': product_id, 
+            'error': str(e), 
+            'product_id': product_id,
+            'product_name': product.name if 'product' in locals() else str(product_id)
+        }
+
+@login_required
+def ai_match_attributes(request):
+    if request.method == 'POST':
+        is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.content_type == 'application/json'
+        
+        if is_ajax:
+            try:
+                body = json.loads(request.body)
+                selected_ids = body.get('selected_products', [])
+            except:
+                selected_ids = []
+        else:
+            selected_ids = request.POST.getlist('selected_products')
+
+        if not selected_ids:
+            if is_ajax:
+                return JsonResponse({'error': 'Lütfen ürün seçin.'}, status=400)
+            messages.warning(request, "Lütfen ürün seçin.")
+            return redirect('ai_tools')
+            
+        products = Product.objects.filter(id__in=selected_ids)
+        
+        # Get API Keys
+        try:
+            settings = GeminiSettings.objects.get(user=request.user)
+            api_keys = list(settings.api_keys.values_list('key', flat=True))
+            if not api_keys and settings.api_key:
+                api_keys = [settings.api_key]
+        except GeminiSettings.DoesNotExist:
+            if is_ajax:
+                return JsonResponse({'error': 'AI Ayarları bulunamadı.'}, status=400)
+            messages.error(request, "AI Ayarları bulunamadı.")
+            return redirect('ai_tools')
+            
+        if not api_keys:
+            if is_ajax:
+                return JsonResponse({'error': 'Aktif API anahtarı bulunamadı.'}, status=400)
+            messages.error(request, "Aktif API anahtarı bulunamadı.")
+            return redirect('ai_tools')
+
+        def stream_response():
+            yield json.dumps({'type': 'start', 'total': products.count()}) + "\n"
+            
+            key_cycle = itertools.cycle(api_keys)
+            max_workers = min(len(api_keys), 5)
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_product = {}
+                for product in products:
+                    key = next(key_cycle)
+                    future = executor.submit(process_attribute_match_task, product.id, key, request.user.id)
+                    future_to_product[future] = product
+
+                for future in concurrent.futures.as_completed(future_to_product):
+                    product = future_to_product[future]
+                    try:
+                        result = future.result()
+                        yield json.dumps({'type': 'result', 'data': result}) + "\n"
+                    except Exception as exc:
+                        yield json.dumps({'type': 'result', 'data': {'success': False, 'sku': product.sku, 'error': str(exc), 'product_id': product.id}}) + "\n"
+            
+            yield json.dumps({'type': 'end'}) + "\n"
+
+        if is_ajax:
+            return StreamingHttpResponse(stream_response(), content_type='application/x-ndjson')
+        
+        messages.info(request, "İşlem arka planda başlatıldı (eski yöntem).")
+        return redirect('ai_tools')
+            
+    return redirect('ai_tools')
+
 @login_required
 def ai_match_categories(request):
     if request.method == 'POST':
@@ -642,3 +936,100 @@ def ai_match_categories(request):
         return redirect('ai_tools')
             
     return redirect('ai_tools')
+
+@login_required
+def get_product_attributes_modal(request, pk):
+    product = get_object_or_404(Product, pk=pk)
+    
+    if not product.trendyol_category_id:
+        return HttpResponse('<div class="alert alert-warning">Bu ürün için Trendyol kategorisi seçilmemiş.</div>')
+        
+    try:
+        service = TrendyolService(user=request.user)
+        response = service.get_category_attributes(product.trendyol_category_id)
+        ty_attributes = response.get('categoryAttributes', [])
+    except Exception as e:
+        return HttpResponse(f'<div class="alert alert-danger">Trendyol API Hatası: {e}</div>')
+
+    # Current selections
+    current_selections = product.trendyol_attributes or []
+    # Convert to a dict for easier lookup: attr_id -> {value_id, custom_value}
+    selection_map = {}
+    for item in current_selections:
+        attr_id = item.get('attributeId')
+        if attr_id:
+            selection_map[attr_id] = item
+
+    # Prepare display list
+    display_attributes = []
+    for attr in ty_attributes:
+        attr_id = attr['attribute']['id']
+        attr_name = attr['attribute']['name']
+        required = attr.get('required', False)
+        values = attr.get('attributeValues', [])
+        
+        current = selection_map.get(attr_id, {})
+        current_val_id = current.get('attributeValueId')
+        current_custom = current.get('customAttributeValue', '')
+        is_defined = bool(current_val_id) or bool(current_custom)
+        
+        display_attributes.append({
+            'id': attr_id,
+            'name': attr_name,
+            'required': required,
+            'values': values,
+            'current_val_id': current_val_id,
+            'current_custom': current_custom,
+            'allow_custom': not values, # If no values list, treat as free text
+            'is_defined': is_defined,
+        })
+
+    required_attributes = [attr for attr in display_attributes if attr['required']]
+    defined_optional_attributes = [attr for attr in display_attributes if not attr['required'] and attr['is_defined']]
+    undefined_optional_attributes = [attr for attr in display_attributes if not attr['required'] and not attr['is_defined']]
+
+    return render(request, 'products/partials/attribute_modal_content.html', {
+        'product': product,
+        'required_attributes': required_attributes,
+        'defined_optional_attributes': defined_optional_attributes,
+        'undefined_optional_attributes': undefined_optional_attributes,
+    })
+
+@require_POST
+def save_product_attributes(request, pk):
+    product = get_object_or_404(Product, pk=pk)
+    
+    new_attributes = []
+    
+    for key, value in request.POST.items():
+        if key.startswith('attr_'):
+            try:
+                attr_id = int(key.replace('attr_', ''))
+                
+                if not value:
+                    continue
+                    
+                item = {'attributeId': attr_id}
+                
+                # Determine type from hidden field
+                is_custom = request.POST.get(f'type_{attr_id}') == 'custom'
+                
+                if is_custom:
+                    item['customAttributeValue'] = value
+                else:
+                    # It's a value ID
+                    try:
+                        item['attributeValueId'] = int(value)
+                    except ValueError:
+                        # Fallback if something weird happens
+                        item['customAttributeValue'] = value
+                
+                new_attributes.append(item)
+            except ValueError:
+                continue
+
+    product.trendyol_attributes = new_attributes
+    product.save()
+    
+    messages.success(request, "Özellikler güncellendi.")
+    return redirect(request.META.get('HTTP_REFERER', 'ai_tools'))

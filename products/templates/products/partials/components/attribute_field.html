@@ -1,0 +1,12 @@
+{% if attr.values %}
+    <input type="hidden" name="type_{{ attr.id }}" value="select">
+    <select name="attr_{{ attr.id }}" class="form-select form-select-sm" {% if attr.required %}required{% endif %}>
+        <option value="">Seçiniz</option>
+        {% for val in attr.values %}
+            <option value="{{ val.id }}" {% if val.id == attr.current_val_id %}selected{% endif %}>{{ val.name }}</option>
+        {% endfor %}
+    </select>
+{% else %}
+    <input type="hidden" name="type_{{ attr.id }}" value="custom">
+    <input type="text" name="attr_{{ attr.id }}" class="form-control form-control-sm" value="{{ attr.current_custom }}" placeholder="{{ attr.name }} giriniz" {% if attr.required %}required{% endif %}>
+{% endif %}
